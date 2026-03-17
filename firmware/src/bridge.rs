@@ -9,10 +9,10 @@ use embassy_sync::mutex::Mutex;
 use heapless::String;
 
 /// Maximum number of BACnet devices we track simultaneously.
-pub const MAX_DEVICES: usize = 32;
+pub const MAX_DEVICES: usize = 8;
 
 /// Maximum number of points per device.
-pub const MAX_POINTS: usize = 64;
+pub const MAX_POINTS: usize = 32;
 
 /// A discovered BACnet device entry.
 #[derive(Clone)]

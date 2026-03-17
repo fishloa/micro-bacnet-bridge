@@ -11,11 +11,13 @@ use bridge_core::ipc::RingBuffer;
 
 /// PDUs flowing from the MS/TP side (Core 1) to the BACnet/IP side (Core 0).
 #[no_mangle]
-pub static mut MSTP_TO_IP_RING: RingBuffer<8> = RingBuffer::new();
+#[allow(non_upper_case_globals)]
+pub static mut mstp_to_ip_ring: RingBuffer<8> = RingBuffer::new();
 
 /// PDUs flowing from the BACnet/IP side (Core 0) to the MS/TP side (Core 1).
 #[no_mangle]
-pub static mut IP_TO_MSTP_RING: RingBuffer<8> = RingBuffer::new();
+#[allow(non_upper_case_globals)]
+pub static mut ip_to_mstp_ring: RingBuffer<8> = RingBuffer::new();
 
 /// Return a mutable reference to the MS/TP → IP ring buffer.
 ///
@@ -26,7 +28,7 @@ pub static mut IP_TO_MSTP_RING: RingBuffer<8> = RingBuffer::new();
 pub fn mstp_to_ip() -> &'static mut RingBuffer<8> {
     // SAFETY: SPSC contract: Core 1 is the sole producer, Core 0 the sole consumer.
     // We use raw pointer + deref to avoid the static_mut_refs lint.
-    unsafe { &mut *core::ptr::addr_of_mut!(MSTP_TO_IP_RING) }
+    unsafe { &mut *core::ptr::addr_of_mut!(mstp_to_ip_ring) }
 }
 
 /// Return a mutable reference to the IP → MS/TP ring buffer.
@@ -37,5 +39,5 @@ pub fn mstp_to_ip() -> &'static mut RingBuffer<8> {
 #[inline]
 pub fn ip_to_mstp() -> &'static mut RingBuffer<8> {
     // SAFETY: SPSC contract: Core 0 is the sole producer, Core 1 the sole consumer.
-    unsafe { &mut *core::ptr::addr_of_mut!(IP_TO_MSTP_RING) }
+    unsafe { &mut *core::ptr::addr_of_mut!(ip_to_mstp_ring) }
 }
