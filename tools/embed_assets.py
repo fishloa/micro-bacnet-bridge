@@ -169,10 +169,23 @@ def main() -> None:
         pct = (1 - gz_size / orig_size) * 100 if orig_size else 0
         print(f"  {rel_posix:<55} {orig_size:>8,} → {gz_size:>8,} bytes  ({pct:4.1f}% saved)")
 
-    # Write Rust source
+    # Write Rust source, then format with cargo fmt
     RUST_OUT.parent.mkdir(parents=True, exist_ok=True)
     rust_src = generate_rust(entries)
     RUST_OUT.write_text(rust_src, encoding="utf-8")
+
+    import shutil
+    import subprocess
+    cargo = shutil.which("cargo")
+    if not cargo:
+        # Try common install locations
+        from pathlib import PurePosixPath
+        for p in [Path.home() / ".cargo" / "bin" / "cargo", Path("/usr/local/bin/cargo")]:
+            if p.exists():
+                cargo = str(p)
+                break
+    if cargo:
+        subprocess.run([cargo, "fmt", "--", str(RUST_OUT)], cwd=ROOT, check=False)
 
     savings = (1 - total_compressed / total_original) * 100 if total_original else 0
     print()

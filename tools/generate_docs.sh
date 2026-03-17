@@ -7,7 +7,7 @@
 #
 # Prerequisites:
 #   - bun (frontend deps installed)
-#   - npx playwright (or bunx playwright)
+#   - playwright (bunx playwright install chromium)
 #   - ffmpeg (for animated GIF)
 #
 # Usage:
@@ -58,7 +58,7 @@ BASE="http://localhost:$PORT"
 
 # Use Playwright CLI to capture screenshots
 # Install if needed
-npx playwright install chromium 2>/dev/null || true
+bunx playwright install chromium 2>/dev/null || true
 
 PLAYWRIGHT_SCRIPT=$(cat <<'PYEOF'
 const { chromium } = require('playwright');

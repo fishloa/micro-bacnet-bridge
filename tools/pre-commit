@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pre-commit hook: lint and test before committing.
+# Install: ln -sf ../../tools/pre-commit .git/hooks/pre-commit
+
+set -e
+
+# Ensure cargo is on PATH
+export PATH="$HOME/.cargo/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+
+echo "pre-commit: checking Rust formatting..."
+cargo fmt --all -- --check || { echo "FAILED: Run 'cargo fmt --all' to fix."; exit 1; }
+
+echo "pre-commit: running bridge-core tests..."
+cargo test -p bridge-core --quiet || { echo "FAILED: bridge-core tests."; exit 1; }
+
+echo "pre-commit: checking firmware compiles..."
+cargo check -p firmware --target thumbv6m-none-eabi --quiet 2>/dev/null || { echo "FAILED: firmware check."; exit 1; }
+
+echo "pre-commit: all checks passed."
