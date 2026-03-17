@@ -158,10 +158,7 @@ fn write_label(buf: &mut [u8], pos: &mut usize, label: &str) -> Result<(), Encod
 /// byte offset just *after* the name (not following any pointer target).
 ///
 /// We limit pointer following to 8 hops to prevent infinite loops.
-fn read_name<'a>(
-    data: &'a [u8],
-    start: usize,
-) -> Result<(heapless::String<128>, usize), DecodeError> {
+fn read_name(data: &[u8], start: usize) -> Result<(heapless::String<128>, usize), DecodeError> {
     let mut name: heapless::String<128> = heapless::String::new();
     let mut pos = start;
     let mut end_pos: Option<usize> = None;
