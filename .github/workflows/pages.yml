@@ -1,0 +1,117 @@
+name: Deploy API docs to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/openapi.yaml'
+      - '.github/workflows/pages.yml'
+
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+
+# Sets permissions for GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; cancel in-progress runs
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-docs:
+    name: Build Redoc HTML
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check openapi.yaml exists
+        run: |
+          if [ ! -f docs/openapi.yaml ]; then
+            echo "ERROR: docs/openapi.yaml not found — nothing to deploy."
+            exit 1
+          fi
+          echo "Found docs/openapi.yaml ($(wc -l < docs/openapi.yaml) lines)"
+
+      - name: Build Redoc standalone HTML
+        run: |
+          mkdir -p _site
+
+          # Download the Redoc CLI (standalone bundle, no Node.js needed)
+          REDOC_VERSION="2.1.5"
+          curl -fsSL \
+            "https://cdn.jsdelivr.net/npm/redoc@${REDOC_VERSION}/bundles/redoc.standalone.js" \
+            -o /tmp/redoc.standalone.js
+
+          # Generate a self-contained HTML page that loads the spec inline
+          python3 - <<'PYEOF'
+          import json, pathlib, sys
+
+          spec_path  = pathlib.Path("docs/openapi.yaml")
+          output     = pathlib.Path("_site/index.html")
+          redoc_js   = pathlib.Path("/tmp/redoc.standalone.js").read_text()
+          spec_text  = spec_path.read_text()
+
+          html = f"""<!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8" />
+            <meta name="viewport" content="width=device-width, initial-scale=1" />
+            <title>BACnet Bridge API – Icomb Place</title>
+            <style>
+              body {{ margin: 0; padding: 0; }}
+            </style>
+          </head>
+          <body>
+            <div id="redoc-container"></div>
+            <script>
+          // Inline Redoc bundle
+          {redoc_js}
+            </script>
+            <script id="api-spec" type="application/yaml">
+          {spec_text}
+            </script>
+            <script>
+              const specText = document.getElementById('api-spec').textContent;
+              // Redoc can accept a YAML string via specUrl or an object;
+              // parse with js-yaml if available, else pass URL.
+              // We use the data-URI trick so no external fetch is needed.
+              const blob = new Blob([specText], {{ type: 'application/yaml' }});
+              const url  = URL.createObjectURL(blob);
+              Redoc.init(url, {{
+                scrollYOffset: 50,
+                hideHostname: false,
+              }}, document.getElementById('redoc-container'));
+            </script>
+          </body>
+          </html>"""
+
+          output.write_text(html)
+          print(f"Written {len(html):,} bytes to {output}")
+          PYEOF
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build-docs
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

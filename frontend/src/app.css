@@ -1,0 +1,124 @@
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+html, body {
+	height: 100%;
+	font-family: var(--vui-font-sans);
+	font-size: var(--vui-text-base);
+	color: var(--vui-text);
+	background: var(--vui-bg-deep);
+}
+
+a {
+	color: var(--vui-accent);
+	text-decoration: none;
+}
+
+a:hover {
+	color: var(--vui-accent-hover);
+}
+
+::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--vui-text-dim);
+	border-radius: var(--vui-radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--vui-text-muted);
+}
+
+/* App shell */
+.app-shell {
+	display: flex;
+	height: 100vh;
+	overflow: hidden;
+}
+
+.app-nav {
+	width: 56px;
+	min-width: 56px;
+	background: var(--vui-bg-deep);
+	border-right: 1px solid var(--vui-border);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: var(--vui-space-sm) 0;
+	gap: var(--vui-space-xs);
+}
+
+.app-nav a, .app-nav button {
+	width: 40px;
+	height: 40px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--vui-radius-md);
+	color: var(--vui-text-muted);
+	border: none;
+	background: none;
+	cursor: pointer;
+	transition: all var(--vui-duration-fast) var(--vui-ease-default);
+	font-size: 18px;
+}
+
+.app-nav a:hover, .app-nav button:hover {
+	background: var(--vui-surface);
+	color: var(--vui-text);
+}
+
+.app-nav a.active {
+	background: var(--vui-accent-dim);
+	color: var(--vui-accent);
+}
+
+.nav-spacer {
+	flex: 1;
+}
+
+.app-content {
+	flex: 1;
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+
+/* Utility classes */
+.mono {
+	font-family: var(--vui-font-mono);
+}
+
+.text-sub {
+	color: var(--vui-text-sub);
+}
+
+.text-muted {
+	color: var(--vui-text-muted);
+}
+
+.text-sm {
+	font-size: var(--vui-text-sm);
+}
+
+.text-xs {
+	font-size: var(--vui-text-xs);
+}
+
+.gap-sm {
+	gap: var(--vui-space-sm);
+}
+
+.gap-md {
+	gap: var(--vui-space-md);
+}

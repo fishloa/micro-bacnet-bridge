@@ -1,0 +1,12 @@
+[workspace]
+members = ["firmware", "bridge-core"]
+resolver = "2"
+
+[profile.release]
+codegen-units = 1
+debug = 2
+debug-assertions = false
+incremental = false
+lto = "fat"
+opt-level = "z"
+overflow-checks = false

@@ -1,0 +1,130 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to create GitHub Releases
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          # Fetch full history so we can generate changelogs from all tags
+          fetch-depth: 0
+
+      # ── Rust toolchain ───────────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: thumbv6m-none-eabi
+
+      # ── Cargo cache ─────────────────────────────────────────────────────────
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-release-
+
+      # ── Native toolchain ─────────────────────────────────────────────────────
+      - name: Install arm-none-eabi-gcc
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+
+      # ── Bun + frontend build ─────────────────────────────────────────────────
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run build
+
+      # ── Embed web assets ─────────────────────────────────────────────────────
+      - name: Embed assets into firmware
+        run: python3 tools/embed_assets.py
+
+      # ── Host tests ───────────────────────────────────────────────────────────
+      - name: Run host tests
+        run: cargo test -p bridge-core
+
+      # ── Firmware build ────────────────────────────────────────────────────────
+      - name: Build firmware (release)
+        run: cargo build -p firmware --release --target thumbv6m-none-eabi
+
+      # ── ELF → UF2 ────────────────────────────────────────────────────────────
+      - name: Install elf2uf2-rs
+        run: cargo install elf2uf2-rs --locked
+
+      - name: Convert ELF to UF2
+        run: |
+          VERSION="${GITHUB_REF_NAME}"   # e.g. v0.1.0
+          ELF="target/thumbv6m-none-eabi/release/firmware"
+          UF2="target/micro-bacnet-bridge-${VERSION}.uf2"
+          elf2uf2-rs "$ELF" "$UF2"
+          echo "UF2_PATH=$UF2" >> "$GITHUB_ENV"
+          echo "UF2_NAME=micro-bacnet-bridge-${VERSION}.uf2" >> "$GITHUB_ENV"
+
+      # ── Changelog ────────────────────────────────────────────────────────────
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Find previous tag, fall back to first commit if this is the first tag
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${GITHUB_REF_NAME}$" | head -n1 || true)
+          if [ -z "$PREV_TAG" ]; then
+            RANGE="HEAD"
+          else
+            RANGE="${PREV_TAG}..HEAD"
+          fi
+
+          echo "Generating changelog from ${PREV_TAG:-beginning} to ${GITHUB_REF_NAME}"
+
+          CHANGELOG=$(git log "$RANGE" \
+            --pretty=format:"- %s (%h)" \
+            --no-merges \
+            | head -100)
+
+          # Write to a temp file to avoid quoting issues in GITHUB_OUTPUT
+          printf '%s' "$CHANGELOG" > /tmp/changelog.txt
+          echo "file=/tmp/changelog.txt" >> "$GITHUB_OUTPUT"
+
+      # ── GitHub Release ────────────────────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "micro-bacnet-bridge ${{ github.ref_name }}"
+          body_path: ${{ steps.changelog.outputs.file }}
+          files: ${{ env.UF2_PATH }}
+          fail_on_unmatched_files: true
+          generate_release_notes: false

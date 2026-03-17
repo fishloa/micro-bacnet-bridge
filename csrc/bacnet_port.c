@@ -1,0 +1,197 @@
+/**
+ * @file bacnet_port.c
+ * @brief bacnet-stack platform adaptation layer for the RP2040.
+ *
+ * bacnet-stack expects certain platform-specific functions to be provided by
+ * the port.  This file supplies the minimum set required for the MS/TP master
+ * state machine running on Core 1.
+ *
+ * Functions that are no-ops (because the RP2040 timer is managed entirely
+ * through mstp_port.c) are documented as such.  Functions that require
+ * bacnet-stack headers are tagged with TODO markers indicating where
+ * full integration will occur in a subsequent implementation phase.
+ *
+ * Include path when compiled by build.rs (cc crate):
+ *   -I lib/bacnet-stack/src          (for "bacnet/bacdef.h" etc.)
+ *   -I lib/bacnet-stack/ports/...    (for any port-specific headers)
+ *
+ * @author Icomb Place
+ * @copyright SPDX-License-Identifier: MIT
+ */
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#include "bacnet_bridge.h"
+
+/*
+ * TODO(phase-4): When bacnet-stack headers are available via the include path
+ * configured in build.rs, uncomment the following includes and remove the
+ * placeholder forward declarations below.
+ *
+ *   #include "bacnet/bacdef.h"
+ *   #include "bacnet/datalink/mstp.h"
+ *   #include "bacnet/datalink/dlmstp.h"
+ */
+
+/* --------------------------------------------------------------------------
+ * Timer platform hooks
+ *
+ * bacnet-stack/src/bacnet/basic/sys/mstimer.c (and similar) calls
+ * timer_milliseconds() to get the current time.  The function is delegated
+ * to mstp_port_timer_ms() which reads the RP2040 hardware timer directly.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Initialise the platform millisecond timer.
+ *
+ * No-op on the RP2040: the TIMER peripheral runs continuously from power-on
+ * and does not require software initialisation.  mstp_port_init() is the
+ * correct place for any hardware setup that affects timing.
+ */
+void timer_init(void)
+{
+    /* No initialisation required — RP2040 TIMER runs from power-on. */
+}
+
+/**
+ * @brief Return the current millisecond timestamp.
+ *
+ * Delegated to mstp_port_timer_ms() which reads TIMER_TIMERAWL directly.
+ *
+ * @return Milliseconds since boot.
+ */
+uint32_t timer_milliseconds(void)
+{
+    return mstp_port_timer_ms();
+}
+
+/* --------------------------------------------------------------------------
+ * bacnet-stack silence timer callbacks
+ *
+ * The mstp_port_struct_t has two function-pointer fields used by the MS/TP
+ * receive state machine to measure silence on the RS-485 bus:
+ *
+ *   uint32_t (*SilenceTimer)(void *pArg)   — returns ms since last activity.
+ *   void     (*SilenceTimerReset)(void *pArg) — resets the silence counter.
+ *
+ * These are assigned during MS/TP port initialisation in core1_entry.c.
+ * The implementations below are the actual callback targets.
+ *
+ * TODO(phase-4): Confirm that bacnet-stack's mstp_port_struct_t SilenceTimer
+ * field signature matches these prototypes once headers are available.
+ * -------------------------------------------------------------------------- */
+
+/** Timestamp (ms) of the last RS-485 bus activity. */
+static volatile uint32_t silence_timer_start_ms = 0u;
+
+/**
+ * @brief Return the number of milliseconds since the last RS-485 activity.
+ *
+ * Called by the MS/TP receive FSM to detect frame-abort and token-loss
+ * conditions (Tframe_abort, Tno_token, etc.).
+ *
+ * @param pArg  Unused context pointer (required by bacnet-stack callback signature).
+ * @return Milliseconds elapsed since last call to silence_timer_reset().
+ */
+uint32_t silence_timer_ms(void *pArg)
+{
+    uint32_t now;
+    (void)pArg;
+
+    now = mstp_port_timer_ms();
+    /* Unsigned subtraction handles timer wraparound correctly. */
+    return now - silence_timer_start_ms;
+}
+
+/**
+ * @brief Reset the silence timer to the current time.
+ *
+ * Called by the MS/TP state machine whenever a valid octet is received or
+ * a frame transmission completes.
+ *
+ * @param pArg  Unused context pointer.
+ */
+void silence_timer_reset(void *pArg)
+{
+    (void)pArg;
+    silence_timer_start_ms = mstp_port_timer_ms();
+}
+
+/* --------------------------------------------------------------------------
+ * RS-485 send-frame hook
+ *
+ * bacnet-stack's MSTP_Master_Node_FSM() calls a platform-supplied
+ * RS485_Send_Frame() function to physically transmit a frame.  The
+ * implementation below wraps the byte-level mstp_port_* functions.
+ *
+ * TODO(phase-4): Include "bacnet/datalink/mstp.h" and use the correct
+ * mstp_port_struct_t pointer type once headers are on the include path.
+ * The current prototype uses void* to avoid a forward-declaration cycle.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Transmit a raw MS/TP frame over UART1/RS-485.
+ *
+ * Asserts DE high (transmit mode), sends each byte, waits for the TX FIFO to
+ * drain and the UART to become idle, then de-asserts DE (receive mode).
+ *
+ * @param mstp_port  Pointer to the MS/TP port struct (cast to void* here;
+ *                   will be typed as struct mstp_port_struct_t* in phase 4).
+ * @param buffer     Pointer to the frame bytes to transmit.
+ * @param nbytes     Number of bytes in the frame.
+ */
+void RS485_Send_Frame(void *mstp_port, const uint8_t *buffer, uint16_t nbytes)
+{
+    uint16_t i;
+
+    /* Suppress unused-parameter warning until full integration. */
+    (void)mstp_port;
+
+    if ((buffer == (const uint8_t *)0) || (nbytes == 0u)) {
+        return;
+    }
+
+    /* Assert DE to enable the RS-485 driver. */
+    mstp_port_set_direction(true);
+
+    /* Transmit each byte. mstp_port_put_byte() spins until TX FIFO has space. */
+    for (i = 0u; i < nbytes; i++) {
+        mstp_port_put_byte(buffer[i]);
+    }
+
+    /*
+     * TODO(phase-4): Wait for the UART shift register to empty (UART_FR_BUSY
+     * clear) before de-asserting DE.  The register address is defined in
+     * mstp_port.c; expose a mstp_port_tx_complete() helper if needed.
+     * For now, the loop above is sufficient for initial bring-up.
+     */
+
+    /* De-assert DE to return to receive mode. */
+    mstp_port_set_direction(false);
+}
+
+/**
+ * @brief Check the UART1 RX FIFO and update the MS/TP port state.
+ *
+ * bacnet-stack expects a RS485_Check_UART_Data() function that reads
+ * available bytes from the hardware and feeds them into the MS/TP receive
+ * state machine via the DataAvailable / DataRegister fields of the port
+ * struct, then calls MSTP_Receive_Frame_FSM().
+ *
+ * TODO(phase-4): Replace void* with struct mstp_port_struct_t* and implement
+ * the full byte-feed loop:
+ *
+ *   while (mstp_port_byte_available()) {
+ *       port->DataRegister   = mstp_port_get_byte();
+ *       port->DataAvailable  = 1;
+ *       MSTP_Receive_Frame_FSM(port);
+ *   }
+ *
+ * @param mstp_port  Pointer to the MS/TP port struct (void* placeholder).
+ */
+void RS485_Check_UART_Data(void *mstp_port)
+{
+    /* TODO(phase-4): implement byte-feed loop using typed mstp_port_struct_t. */
+    (void)mstp_port;
+}

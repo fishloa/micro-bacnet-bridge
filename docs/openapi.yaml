@@ -1,0 +1,954 @@
+openapi: 3.1.0
+
+info:
+  title: BACnet Bridge API
+  version: 0.1.0
+  description: >
+    REST API for the Icomb Place micro-bacnet-bridge (WIZnet W5500-EVB-Pico-PoE).
+    Provides device discovery, point read/write, configuration management, and
+    system control.  All endpoints are served on port 80 at the base path
+    `/api/v1`.  Authentication is cookie-based; obtain a session via
+    `POST /auth/login`.
+  contact:
+    name: Icomb Place
+    url: https://icomb.place
+
+servers:
+  - url: /api/v1
+    description: Device (relative URL — works regardless of IP/hostname)
+
+# ── Security ──────────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: >
+        Session token returned by `POST /auth/login` as a `Set-Cookie` header.
+        Include the cookie automatically (browser) or add the `Cookie: session=<token>`
+        header manually.
+
+  # ── Reusable schemas ────────────────────────────────────────────────────────
+  schemas:
+
+    # ── BACnet ──────────────────────────────────────────────────────────────
+    ObjectType:
+      type: string
+      enum: [AI, AO, AV, BI, BO, BV, MSI, MSO, MSV, NC, TL, DEV]
+      description: BACnet object type abbreviation.
+      example: AV
+
+    ObjectIdentifier:
+      type: string
+      pattern: '^[A-Z]+:[0-9]+$'
+      description: >
+        Composite object identifier in `TYPE:INSTANCE` form.
+        E.g. `AV:1`, `AI:3`, `BI:0`.
+      example: AV:1
+
+    BacnetDevice:
+      type: object
+      required: [device_id, name, address, vendor_id, model_name, firmware_revision]
+      properties:
+        device_id:
+          type: integer
+          minimum: 0
+          maximum: 4194303
+          description: BACnet Device Instance number.
+          example: 1001
+        name:
+          type: string
+          description: BACnet Device Object Name.
+          example: "Room Controller 1"
+        address:
+          type: string
+          description: Network address (`IP:port` for BACnet/IP, `MAC` for MS/TP).
+          example: "192.168.1.50:47808"
+        vendor_id:
+          type: integer
+          example: 65535
+        vendor_name:
+          type: string
+          example: "Unknown Vendor"
+        model_name:
+          type: string
+          example: "BTL-Listed Controller"
+        firmware_revision:
+          type: string
+          example: "2.4.1"
+        protocol_services_supported:
+          type: array
+          items:
+            type: string
+          example: ["readProperty", "writeProperty", "subscribeCOV"]
+
+    BacnetPoint:
+      type: object
+      required: [object_id, object_type, object_name, present_value]
+      properties:
+        object_id:
+          $ref: '#/components/schemas/ObjectIdentifier'
+        object_type:
+          $ref: '#/components/schemas/ObjectType'
+        object_name:
+          type: string
+          description: BACnet Object_Name property.
+          example: "Zone Temp"
+        description:
+          type: string
+          example: "Zone air temperature sensor"
+        present_value:
+          description: >
+            Present value — number for Analog/MultiState, boolean for Binary.
+          oneOf:
+            - type: number
+            - type: boolean
+            - type: string
+          example: 21.5
+        units:
+          type: string
+          description: Engineering units label.
+          example: "degC"
+        writable:
+          type: boolean
+          description: Whether WriteProperty is supported at priority 8.
+          example: false
+        out_of_service:
+          type: boolean
+          example: false
+        display_name_override:
+          type: string
+          nullable: true
+          description: User-configured display name (overrides object_name in UI).
+          example: null
+        ignored:
+          type: boolean
+          description: Whether this point is hidden in the UI.
+          example: false
+
+    PointWriteRequest:
+      type: object
+      required: [present_value]
+      properties:
+        present_value:
+          oneOf:
+            - type: number
+            - type: boolean
+            - type: string
+          example: 22.0
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 16
+          default: 8
+          description: BACnet write priority (1 = highest, 16 = lowest).
+          example: 8
+
+    # ── Config ───────────────────────────────────────────────────────────────
+    NetworkConfig:
+      type: object
+      required: [dhcp_enabled]
+      properties:
+        dhcp_enabled:
+          type: boolean
+          example: true
+        ip_address:
+          type: string
+          format: ipv4
+          nullable: true
+          example: "192.168.1.100"
+        subnet_mask:
+          type: string
+          format: ipv4
+          nullable: true
+          example: "255.255.255.0"
+        gateway:
+          type: string
+          format: ipv4
+          nullable: true
+          example: "192.168.1.1"
+        dns_server:
+          type: string
+          format: ipv4
+          nullable: true
+          example: "8.8.8.8"
+        current_ip:
+          type: string
+          format: ipv4
+          readOnly: true
+          description: Currently assigned IP address (read-only, reflects DHCP lease or static).
+          example: "192.168.1.100"
+
+    BacnetConfig:
+      type: object
+      required: [device_id, device_name, mstp_mac, mstp_baud, max_master]
+      properties:
+        device_id:
+          type: integer
+          minimum: 0
+          maximum: 4194303
+          description: BACnet Device Instance number for the bridge itself.
+          example: 9999
+        device_name:
+          type: string
+          maxLength: 64
+          example: "bacnet-bridge"
+        vendor_name:
+          type: string
+          readOnly: true
+          example: "Icomb Place"
+        vendor_id:
+          type: integer
+          readOnly: true
+          example: 65535
+        mstp_mac:
+          type: integer
+          minimum: 0
+          maximum: 127
+          description: MS/TP MAC address for the bridge.
+          example: 0
+        mstp_baud:
+          type: integer
+          enum: [9600, 19200, 38400, 76800]
+          description: MS/TP baud rate.
+          example: 38400
+        max_master:
+          type: integer
+          minimum: 0
+          maximum: 127
+          description: MS/TP Max_Master (highest MAC address to poll).
+          example: 127
+        bbmd_enabled:
+          type: boolean
+          example: false
+        bbmd_table:
+          type: array
+          description: BBMD Broadcast Distribution Table entries.
+          items:
+            type: object
+            required: [address, mask]
+            properties:
+              address:
+                type: string
+                format: ipv4
+                example: "192.168.2.255"
+              mask:
+                type: string
+                format: ipv4
+                example: "255.255.255.0"
+
+    MdnsConfig:
+      type: object
+      required: [hostname, mdns_enabled]
+      properties:
+        hostname:
+          type: string
+          pattern: '^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$'
+          description: mDNS hostname (without `.local` suffix).
+          example: "bacnet-bridge"
+        mdns_enabled:
+          type: boolean
+          example: true
+        fqdn:
+          type: string
+          readOnly: true
+          description: Full mDNS hostname including `.local`.
+          example: "bacnet-bridge.local"
+
+    PointMapping:
+      type: object
+      required: [object_id]
+      properties:
+        object_id:
+          $ref: '#/components/schemas/ObjectIdentifier'
+        display_name_override:
+          type: string
+          nullable: true
+          example: "Zone Setpoint"
+        description_override:
+          type: string
+          nullable: true
+          example: null
+        unit_label_override:
+          type: string
+          nullable: true
+          example: null
+        ignored:
+          type: boolean
+          example: false
+
+    # ── Auth / Users ─────────────────────────────────────────────────────────
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          example: "admin"
+        password:
+          type: string
+          format: password
+          example: "changeme"
+
+    LoginResponse:
+      type: object
+      properties:
+        username:
+          type: string
+          example: "admin"
+        role:
+          $ref: '#/components/schemas/UserRole'
+        expires_at:
+          type: string
+          format: date-time
+          example: "2026-03-18T10:00:00Z"
+
+    UserRole:
+      type: string
+      enum: [admin, viewer]
+      description: >
+        `admin` has full read/write access.  `viewer` has read-only access.
+      example: admin
+
+    User:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: integer
+          example: 1
+        username:
+          type: string
+          example: "admin"
+        role:
+          $ref: '#/components/schemas/UserRole'
+
+    CreateUserRequest:
+      type: object
+      required: [username, password, role]
+      properties:
+        username:
+          type: string
+          minLength: 1
+          maxLength: 32
+          example: "operator"
+        password:
+          type: string
+          format: password
+          minLength: 8
+          example: "s3cureP@ss"
+        role:
+          $ref: '#/components/schemas/UserRole'
+
+    # ── System ────────────────────────────────────────────────────────────────
+    SystemStatus:
+      type: object
+      properties:
+        uptime_seconds:
+          type: integer
+          description: Seconds since last boot.
+          example: 3600
+        firmware_version:
+          type: string
+          example: "0.1.0"
+        ip_address:
+          type: string
+          format: ipv4
+          example: "192.168.1.100"
+        dhcp_state:
+          type: string
+          enum: [bound, renewing, rebinding, requesting, init, failed, static]
+          example: "bound"
+        dhcp_lease_expires_at:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2026-03-17T12:00:00Z"
+        mdns_hostname:
+          type: string
+          example: "bacnet-bridge.local"
+        mstp_stats:
+          type: object
+          properties:
+            frames_sent:
+              type: integer
+              example: 1200
+            frames_received:
+              type: integer
+              example: 1100
+            token_passes:
+              type: integer
+              example: 550
+            errors:
+              type: integer
+              example: 3
+            bus_utilisation_pct:
+              type: number
+              format: float
+              example: 12.4
+        bacnet_ip_stats:
+          type: object
+          properties:
+            packets_sent:
+              type: integer
+              example: 800
+            packets_received:
+              type: integer
+              example: 780
+        device_count:
+          type: integer
+          description: Number of discovered BACnet devices.
+          example: 4
+
+    # ── Common error ─────────────────────────────────────────────────────────
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message.
+          example: "Device not found"
+        code:
+          type: string
+          description: Machine-readable error code.
+          example: "NOT_FOUND"
+
+# ── Global security default ────────────────────────────────────────────────────
+security:
+  - sessionCookie: []
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Auth ──────────────────────────────────────────────────────────────────
+  /auth/login:
+    post:
+      summary: Log in and obtain a session cookie
+      operationId: authLogin
+      security: []     # No auth required to log in
+      tags: [Auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful.  Session cookie set in `Set-Cookie` header.
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: "session=abc123; HttpOnly; Path=/; Max-Age=86400"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid username or password"
+                code: "INVALID_CREDENTIALS"
+
+  /auth/logout:
+    post:
+      summary: Log out and invalidate session
+      operationId: authLogout
+      tags: [Auth]
+      responses:
+        '204':
+          description: Session invalidated.
+        '401':
+          description: Not authenticated.
+
+  # ── Users ─────────────────────────────────────────────────────────────────
+  /users:
+    get:
+      summary: List all users
+      operationId: listUsers
+      tags: [Users]
+      responses:
+        '200':
+          description: Array of user objects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/User'
+              example:
+                - id: 1
+                  username: "admin"
+                  role: "admin"
+                - id: 2
+                  username: "viewer"
+                  role: "viewer"
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+    post:
+      summary: Create a new user (admin only)
+      operationId: createUser
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        '201':
+          description: User created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Username already taken.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Username already exists"
+                code: "CONFLICT"
+
+  /users/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+        example: 2
+    delete:
+      summary: Delete a user (admin only)
+      operationId: deleteUser
+      tags: [Users]
+      responses:
+        '204':
+          description: User deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Devices ───────────────────────────────────────────────────────────────
+  /devices:
+    get:
+      summary: List all discovered BACnet devices
+      operationId: listDevices
+      tags: [Devices]
+      responses:
+        '200':
+          description: Array of BACnet devices currently known to the bridge.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BacnetDevice'
+              example:
+                - device_id: 1001
+                  name: "Room Controller 1"
+                  address: "192.168.1.50:47808"
+                  vendor_id: 260
+                  vendor_name: "Siemens"
+                  model_name: "PXC3.E72"
+                  firmware_revision: "2.4"
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+
+  /devices/{device_id}/points:
+    parameters:
+      - name: device_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 4194303
+        description: BACnet Device Instance number.
+        example: 1001
+    get:
+      summary: List all points (objects) for a device
+      operationId: listDevicePoints
+      tags: [Devices]
+      parameters:
+        - name: type
+          in: query
+          schema:
+            $ref: '#/components/schemas/ObjectType'
+          description: Filter by object type.
+          example: AV
+        - name: writable
+          in: query
+          schema:
+            type: boolean
+          description: If true, only return writable points.
+        - name: ignored
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: If true, include points marked as ignored.
+      responses:
+        '200':
+          description: Array of BACnet point objects.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/BacnetPoint'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /devices/{device_id}/points/{object_id}:
+    parameters:
+      - name: device_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 4194303
+        example: 1001
+      - name: object_id
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/ObjectIdentifier'
+        example: "AV:1"
+    get:
+      summary: Read a single point
+      operationId: getDevicePoint
+      tags: [Devices]
+      responses:
+        '200':
+          description: Point details including current present value.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacnetPoint'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Write a value to a point (requires auth, point must be writable)
+      operationId: writeDevicePoint
+      tags: [Devices]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PointWriteRequest'
+      responses:
+        '200':
+          description: Write acknowledged.  Returns updated point state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacnetPoint'
+        '400':
+          description: Invalid value or point is not writable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Config: Network ───────────────────────────────────────────────────────
+  /config/network:
+    get:
+      summary: Get network configuration
+      operationId: getNetworkConfig
+      tags: [Config]
+      responses:
+        '200':
+          description: Current network config.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+    put:
+      summary: Update network configuration (takes effect after reboot)
+      operationId: setNetworkConfig
+      tags: [Config]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NetworkConfig'
+      responses:
+        '200':
+          description: Config saved.  Reboot required for changes to take effect.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NetworkConfig'
+        '400':
+          description: Validation error.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Config: BACnet ────────────────────────────────────────────────────────
+  /config/bacnet:
+    get:
+      summary: Get BACnet / MS/TP configuration
+      operationId: getBacnetConfig
+      tags: [Config]
+      responses:
+        '200':
+          description: Current BACnet config.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacnetConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+    put:
+      summary: Update BACnet configuration
+      operationId: setBacnetConfig
+      tags: [Config]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BacnetConfig'
+      responses:
+        '200':
+          description: Config saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BacnetConfig'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Validation error.
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Config: mDNS ─────────────────────────────────────────────────────────
+  /config/mdns:
+    get:
+      summary: Get mDNS / hostname configuration
+      operationId: getMdnsConfig
+      tags: [Config]
+      responses:
+        '200':
+          description: Current mDNS config.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MdnsConfig'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+    put:
+      summary: Update mDNS hostname and enable/disable mDNS (takes effect immediately)
+      operationId: setMdnsConfig
+      tags: [Config]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MdnsConfig'
+      responses:
+        '200':
+          description: Config saved and mDNS re-announced.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MdnsConfig'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Validation error (e.g. invalid hostname characters).
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── Config: Points ────────────────────────────────────────────────────────
+  /config/points:
+    get:
+      summary: Get all point display/ignore mappings
+      operationId: getAllPointMappings
+      tags: [Config]
+      responses:
+        '200':
+          description: Array of all stored point mappings.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PointMapping'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+
+  /config/points/{object_id}:
+    parameters:
+      - name: object_id
+        in: path
+        required: true
+        schema:
+          $ref: '#/components/schemas/ObjectIdentifier'
+        example: "AV:1"
+    put:
+      summary: Update display name, description, units, or ignored flag for a point
+      operationId: updatePointMapping
+      tags: [Config]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PointMapping'
+      responses:
+        '200':
+          description: Mapping saved.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PointMapping'
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Validation error.
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  # ── System ────────────────────────────────────────────────────────────────
+  /system/status:
+    get:
+      summary: Get system status (uptime, IP, DHCP, MS/TP stats, device count)
+      operationId: getSystemStatus
+      tags: [System]
+      responses:
+        '200':
+          description: System status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+
+  /system/reboot:
+    post:
+      summary: Reboot the device
+      operationId: rebootDevice
+      tags: [System]
+      responses:
+        '202':
+          description: Reboot initiated.  Device will restart within 1 second.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Rebooting…"
+        '401':
+          $ref: '#/components/responses/Unauthorised'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+# ── Reusable responses ────────────────────────────────────────────────────────
+  responses:
+    Unauthorised:
+      description: Not authenticated — session cookie missing or expired.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Authentication required"
+            code: "UNAUTHORISED"
+
+    Forbidden:
+      description: Authenticated but insufficient role (viewer attempting write).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Insufficient permissions"
+            code: "FORBIDDEN"
+
+    NotFound:
+      description: The requested resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Not found"
+            code: "NOT_FOUND"
+
+# ── Tags ──────────────────────────────────────────────────────────────────────
+tags:
+  - name: Auth
+    description: Session authentication
+  - name: Users
+    description: User management (admin only)
+  - name: Devices
+    description: BACnet device and point discovery / read / write
+  - name: Config
+    description: Persistent device configuration (network, BACnet, mDNS, point mappings)
+  - name: System
+    description: System status and control

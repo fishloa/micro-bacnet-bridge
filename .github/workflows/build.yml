@@ -1,0 +1,133 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep a single consistent Rust toolchain version across all jobs
+  RUST_TOOLCHAIN: stable
+
+jobs:
+  build:
+    name: Build firmware
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ── Rust toolchain ───────────────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+          targets: thumbv6m-none-eabi
+          components: rustfmt, clippy
+
+      # ── Cargo cache ─────────────────────────────────────────────────────────
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache cargo build target
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-target-${{ env.RUST_TOOLCHAIN }}-
+            ${{ runner.os }}-cargo-target-
+
+      # ── Native toolchain (for C bacnet-stack via cc crate) ───────────────────
+      - name: Install arm-none-eabi-gcc
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends gcc-arm-none-eabi
+
+      # ── Bun + frontend build ─────────────────────────────────────────────────
+      - name: Install bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Cache bun dependencies
+        uses: actions/cache@v4
+        with:
+          path: frontend/node_modules
+          key: ${{ runner.os }}-bun-${{ hashFiles('frontend/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: bun install --frozen-lockfile
+
+      - name: Build frontend
+        working-directory: frontend
+        run: bun run build
+
+      # ── Embed web assets ─────────────────────────────────────────────────────
+      - name: Embed assets into firmware
+        run: python3 tools/embed_assets.py
+
+      # ── Host-target tests (bridge-core) ──────────────────────────────────────
+      - name: Run host tests (bridge-core)
+        run: cargo test -p bridge-core
+
+      # ── Lint ─────────────────────────────────────────────────────────────────
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (host)
+        run: cargo clippy -p bridge-core -- -D warnings
+
+      # ── Firmware build (no_std, thumbv6m-none-eabi) ──────────────────────────
+      - name: Build firmware (release)
+        run: cargo build -p firmware --release --target thumbv6m-none-eabi
+
+      # ── Convert ELF → UF2 ────────────────────────────────────────────────────
+      - name: Install elf2uf2-rs
+        run: cargo install elf2uf2-rs --locked
+        # Only attempt conversion if the tool can be installed; non-fatal for PRs.
+        continue-on-error: true
+
+      - name: Convert ELF to UF2
+        run: |
+          ELF="target/thumbv6m-none-eabi/release/firmware"
+          UF2="target/micro-bacnet-bridge.uf2"
+          if command -v elf2uf2-rs &>/dev/null && [ -f "$ELF" ]; then
+            elf2uf2-rs "$ELF" "$UF2"
+            echo "UF2_AVAILABLE=true" >> "$GITHUB_ENV"
+            echo "UF2_PATH=$UF2" >> "$GITHUB_ENV"
+          else
+            echo "UF2_AVAILABLE=false" >> "$GITHUB_ENV"
+          fi
+
+      # ── Upload artifacts ─────────────────────────────────────────────────────
+      - name: Upload firmware ELF
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-elf
+          path: target/thumbv6m-none-eabi/release/firmware
+          if-no-files-found: error
+
+      - name: Upload firmware UF2
+        if: env.UF2_AVAILABLE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-uf2
+          path: ${{ env.UF2_PATH }}
+          if-no-files-found: warn
