@@ -44,13 +44,7 @@ pub async fn bacnet_ip_task(stack: Stack<'static>) {
     let mut rx_buf = [0u8; RX_BUF];
     let mut tx_buf = [0u8; TX_BUF];
 
-    let mut socket = UdpSocket::new(
-        stack,
-        &mut rx_meta,
-        &mut rx_buf,
-        &mut tx_meta,
-        &mut tx_buf,
-    );
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
 
     if socket.bind(BACNET_IP_PORT).is_err() {
         warn!("bacnet_ip: bind failed");

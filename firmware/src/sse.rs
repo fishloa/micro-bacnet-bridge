@@ -65,10 +65,8 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
                                 // Use integer * 1000 representation
                                 let whole = *f as i32;
                                 let frac = ((*f - whole as f32).abs() * 1000.0) as u32;
-                                let _ = core::fmt::write(
-                                    &mut s,
-                                    format_args!("{}.{:03}", whole, frac),
-                                );
+                                let _ =
+                                    core::fmt::write(&mut s, format_args!("{}.{:03}", whole, frac));
                                 s
                             }
                             Some(bridge_core::bacnet::BacnetValue::UnsignedInt(n)) => {
@@ -107,23 +105,20 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
                                 let mut s: heapless::String<64> = heapless::String::new();
                                 let _ = core::fmt::write(
                                     &mut s,
-                                    format_args!(
-                                        "\"{}:{}\"",
-                                        oid.object_type.code(),
-                                        oid.instance
-                                    ),
+                                    format_args!("\"{}:{}\"", oid.object_type.code(), oid.instance),
                                 );
                                 s
                             }
                         };
 
-                        let _ = core::fmt::write(
-                            &mut event,
-                            format_args!(
+                        let _ =
+                            core::fmt::write(
+                                &mut event,
+                                format_args!(
                                 "{{\"deviceId\":{},\"objType\":{},\"instance\":{},\"value\":{}}}",
                                 device_id, obj_type_code, instance, value_str.as_str()
                             ),
-                        );
+                            );
 
                         let _ = events.push(event);
                         if events.is_full() {

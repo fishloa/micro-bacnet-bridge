@@ -119,12 +119,7 @@ impl BridgeStateInner {
     }
 
     /// Update a point value for a device. Creates the slot if needed.
-    pub fn update_point(
-        &mut self,
-        device_idx: usize,
-        object_id: ObjectId,
-        value: BacnetValue,
-    ) {
+    pub fn update_point(&mut self, device_idx: usize, object_id: ObjectId, value: BacnetValue) {
         if device_idx >= MAX_DEVICES {
             return;
         }

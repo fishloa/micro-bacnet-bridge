@@ -11,8 +11,8 @@
 //! Uses the `bridge_core::mdns` codec for packet encoding/decoding.
 
 use bridge_core::mdns::{
-    decode_query, encode_a_response, encode_ptr_response, encode_srv_response,
-    encode_txt_response, MDNS_ADDR, MDNS_PORT, TYPE_A, TYPE_PTR, TYPE_SRV, TYPE_TXT,
+    decode_query, encode_a_response, encode_ptr_response, encode_srv_response, encode_txt_response,
+    MDNS_ADDR, MDNS_PORT, TYPE_A, TYPE_PTR, TYPE_SRV, TYPE_TXT,
 };
 use defmt::{info, warn};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
@@ -42,13 +42,7 @@ pub async fn mdns_task(stack: Stack<'static>) {
     let mut rx_buf = [0u8; RX_BUF];
     let mut tx_buf = [0u8; TX_BUF];
 
-    let mut socket = UdpSocket::new(
-        stack,
-        &mut rx_meta,
-        &mut rx_buf,
-        &mut tx_meta,
-        &mut tx_buf,
-    );
+    let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
 
     if socket.bind(MDNS_PORT).is_err() {
         warn!("mdns: bind failed");
@@ -125,8 +119,7 @@ pub async fn mdns_task(stack: Stack<'static>) {
             encode_a_response(hostname.as_str(), ip, &mut resp_buf).ok()
         } else if qtype == TYPE_PTR {
             if name_str == "_http._tcp.local" {
-                encode_ptr_response("_http._tcp.local", http_instance.as_str(), &mut resp_buf)
-                    .ok()
+                encode_ptr_response("_http._tcp.local", http_instance.as_str(), &mut resp_buf).ok()
             } else if name_str == "_bacnet._udp.local" {
                 encode_ptr_response(
                     "_bacnet._udp.local",
@@ -149,9 +142,21 @@ pub async fn mdns_task(stack: Stack<'static>) {
             }
         } else if qtype == TYPE_SRV {
             if name_str == http_instance.as_str() {
-                encode_srv_response(http_instance.as_str(), hostname.as_str(), HTTP_PORT, &mut resp_buf).ok()
+                encode_srv_response(
+                    http_instance.as_str(),
+                    hostname.as_str(),
+                    HTTP_PORT,
+                    &mut resp_buf,
+                )
+                .ok()
             } else if name_str == bacnet_instance.as_str() {
-                encode_srv_response(bacnet_instance.as_str(), hostname.as_str(), BACNET_PORT, &mut resp_buf).ok()
+                encode_srv_response(
+                    bacnet_instance.as_str(),
+                    hostname.as_str(),
+                    BACNET_PORT,
+                    &mut resp_buf,
+                )
+                .ok()
             } else {
                 None
             }

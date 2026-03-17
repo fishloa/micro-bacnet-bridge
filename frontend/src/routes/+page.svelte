@@ -7,9 +7,11 @@
 	let disconnectSSE: (() => void) | null = null;
 
 	onMount(async () => {
-		const allDevices = await api.getDevices();
-		const allPoints = await Promise.all(allDevices.map(d => api.getPoints(d.id)));
-		$points = allPoints.flat();
+		// Load points from our bridge device (first/primary device)
+		const devices = await api.getDevices();
+		if (devices.length > 0) {
+			$points = await api.getPoints(devices[0].id);
+		}
 
 		// Subscribe to live value updates
 		disconnectSSE = connectSSE((updates) => {

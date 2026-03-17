@@ -30,8 +30,7 @@ const REQ_BUF: usize = 512;
 /// Global reference to the current bridge config.
 /// Initialised to `None`; main sets it before spawning tasks.
 /// After init, always `Some`.
-pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<BridgeConfig>> =
-    Mutex::new(None);
+pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<BridgeConfig>> = Mutex::new(None);
 
 /// Main HTTP server task. Accepts one connection at a time.
 #[embassy_executor::task]
@@ -179,9 +178,8 @@ async fn serve_asset(socket: &mut TcpSocket<'_>, path: &str) {
             let _ = hdr.extend_from_slice(b"\r\n");
             // Cache control: cache immutable assets, revalidate others
             if path.contains("immutable") {
-                let _ = hdr.extend_from_slice(
-                    b"Cache-Control: public, max-age=31536000, immutable\r\n",
-                );
+                let _ = hdr
+                    .extend_from_slice(b"Cache-Control: public, max-age=31536000, immutable\r\n");
             } else {
                 let _ = hdr.extend_from_slice(b"Cache-Control: no-cache\r\n");
             }
@@ -260,10 +258,22 @@ async fn api_get_network_config(socket: &mut TcpSocket<'_>) {
             "{{\"dhcp\":{},\"ip\":\"{}.{}.{}.{}\",\"subnet\":\"{}.{}.{}.{}\",\
              \"gateway\":\"{}.{}.{}.{}\",\"dns\":\"{}.{}.{}.{}\"}}",
             net.dhcp,
-            net.ip[0], net.ip[1], net.ip[2], net.ip[3],
-            net.subnet[0], net.subnet[1], net.subnet[2], net.subnet[3],
-            net.gateway[0], net.gateway[1], net.gateway[2], net.gateway[3],
-            net.dns[0], net.dns[1], net.dns[2], net.dns[3],
+            net.ip[0],
+            net.ip[1],
+            net.ip[2],
+            net.ip[3],
+            net.subnet[0],
+            net.subnet[1],
+            net.subnet[2],
+            net.subnet[3],
+            net.gateway[0],
+            net.gateway[1],
+            net.gateway[2],
+            net.gateway[3],
+            net.dns[0],
+            net.dns[1],
+            net.dns[2],
+            net.dns[3],
         ),
     );
     drop(guard);

@@ -77,11 +77,7 @@ impl NpduHeader {
 /// Encode an NPDU header + APDU payload into `buf`.
 ///
 /// Returns the number of bytes written.
-pub fn encode_npdu(
-    header: &NpduHeader,
-    apdu: &[u8],
-    buf: &mut [u8],
-) -> Result<usize, EncodeError> {
+pub fn encode_npdu(header: &NpduHeader, apdu: &[u8], buf: &mut [u8]) -> Result<usize, EncodeError> {
     let mut ctrl: u8 = 0;
     if header.is_network_layer_msg {
         ctrl |= CTRL_NET_LAYER_MSG;
@@ -271,7 +267,10 @@ mod tests {
 
     #[test]
     fn encode_decode_with_apdu() {
-        let hdr = NpduHeader { expecting_reply: true, ..NpduHeader::local(false) };
+        let hdr = NpduHeader {
+            expecting_reply: true,
+            ..NpduHeader::local(false)
+        };
         let apdu = [0x10u8, 0x08, 0x00, 0x01];
         let mut buf = [0u8; 64];
         let n = encode_npdu(&hdr, &apdu, &mut buf).unwrap();
@@ -342,14 +341,20 @@ mod tests {
 
     #[test]
     fn decode_too_short() {
-        assert_eq!(decode_npdu(&[0x01]).unwrap_err(), DecodeError::UnexpectedEnd);
+        assert_eq!(
+            decode_npdu(&[0x01]).unwrap_err(),
+            DecodeError::UnexpectedEnd
+        );
         assert_eq!(decode_npdu(&[]).unwrap_err(), DecodeError::UnexpectedEnd);
     }
 
     #[test]
     fn decode_wrong_version() {
         let packet = &[0x02u8, 0x00];
-        assert_eq!(decode_npdu(packet).unwrap_err(), DecodeError::InvalidVersion);
+        assert_eq!(
+            decode_npdu(packet).unwrap_err(),
+            DecodeError::InvalidVersion
+        );
     }
 
     #[test]

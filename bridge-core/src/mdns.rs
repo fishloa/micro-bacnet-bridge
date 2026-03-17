@@ -456,7 +456,11 @@ pub fn decode_query(data: &[u8]) -> Result<DnsQuery, DecodeError> {
     let qtype = read_u16(data, pos);
     let qclass = read_u16(data, pos + 2);
 
-    Ok(DnsQuery { name, qtype, qclass })
+    Ok(DnsQuery {
+        name,
+        qtype,
+        qclass,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -474,7 +478,7 @@ mod tests {
         let mut buf = [0u8; 256];
         let n = encode_a_response("mydevice", [192, 168, 1, 42], &mut buf).unwrap();
         assert!(n > 12); // at least header + name + rdata
-        // Check last 4 bytes are the IP
+                         // Check last 4 bytes are the IP
         assert_eq!(&buf[n - 4..n], &[192, 168, 1, 42]);
         // Verify header: QR=1, AA=1, an_count=1
         assert_eq!(read_u16(&buf, 2), 0x8400);
@@ -531,8 +535,7 @@ mod tests {
             ("vendor", "Icomb Place"),
             ("version", "0.1.0"),
         ];
-        let n =
-            encode_txt_response("BACnet Bridge._bacnet._udp.local", pairs, &mut buf).unwrap();
+        let n = encode_txt_response("BACnet Bridge._bacnet._udp.local", pairs, &mut buf).unwrap();
         assert!(n > 12);
         // Verify the TXT rdata contains the key=value pairs
         // Find "deviceId=389999" as a string in the buffer
@@ -559,7 +562,7 @@ mod tests {
         write_u16(&mut buf, &mut pos, 0); // an_count
         write_u16(&mut buf, &mut pos, 0); // ns_count
         write_u16(&mut buf, &mut pos, 0); // ar_count
-        // Name: bacnet-bridge.local
+                                          // Name: bacnet-bridge.local
         write_name(&mut buf, &mut pos, "bacnet-bridge", "local").unwrap();
         // qtype = A, qclass = IN
         write_u16(&mut buf, &mut pos, TYPE_A);
@@ -599,13 +602,19 @@ mod tests {
         write_u16(&mut buf, &mut pos, 0);
         write_u16(&mut buf, &mut pos, 0);
         write_u16(&mut buf, &mut pos, 0);
-        assert_eq!(decode_query(&buf[..12]).unwrap_err(), DecodeError::InvalidData);
+        assert_eq!(
+            decode_query(&buf[..12]).unwrap_err(),
+            DecodeError::InvalidData
+        );
     }
 
     #[test]
     fn decode_query_too_short() {
         assert_eq!(decode_query(&[]).unwrap_err(), DecodeError::UnexpectedEnd);
-        assert_eq!(decode_query(&[0u8; 5]).unwrap_err(), DecodeError::UnexpectedEnd);
+        assert_eq!(
+            decode_query(&[0u8; 5]).unwrap_err(),
+            DecodeError::UnexpectedEnd
+        );
     }
 
     #[test]

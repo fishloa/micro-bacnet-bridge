@@ -23,15 +23,12 @@ pub mod mdns;
 pub mod npdu;
 
 // Top-level re-exports of the most commonly used types.
-pub use bacnet::{
-    ApduType, BacnetValue, ObjectId, ObjectType, PropertyId, ServiceChoice,
-};
+pub use bacnet::{ApduType, BacnetValue, ObjectId, ObjectType, PropertyId, ServiceChoice};
 pub use config::{BacnetDeviceConfig, BridgeConfig, NetworkConfig, UserConfig, UserRole};
 pub use error::{BridgeError, DecodeError, EncodeError};
 pub use ipc::{BacnetPdu, RingBuffer};
 pub use mdns::{
-    decode_query, encode_a_response, encode_ptr_response, encode_srv_response,
-    encode_txt_response, DnsQuery, MDNS_ADDR, MDNS_PORT, TYPE_A, TYPE_PTR, TYPE_SRV,
-    TYPE_TXT,
+    decode_query, encode_a_response, encode_ptr_response, encode_srv_response, encode_txt_response,
+    DnsQuery, MDNS_ADDR, MDNS_PORT, TYPE_A, TYPE_PTR, TYPE_SRV, TYPE_TXT,
 };
 pub use npdu::{decode_npdu, encode_npdu, NpduHeader};

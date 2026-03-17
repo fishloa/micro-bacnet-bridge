@@ -37,10 +37,7 @@ impl ConfigManager {
     /// the sector is blank or the magic number is invalid.
     pub fn load(&mut self) -> BridgeConfig {
         let mut sector_buf = [0u8; SECTOR_SIZE];
-        match self
-            .flash
-            .blocking_read(CONFIG_OFFSET, &mut sector_buf)
-        {
+        match self.flash.blocking_read(CONFIG_OFFSET, &mut sector_buf) {
             Ok(()) => {}
             Err(_) => {
                 warn!("config: flash read error, using defaults");
@@ -61,7 +58,10 @@ impl ConfigManager {
 
         match serde_json_core::from_slice::<BridgeConfig>(&sector_buf[..json_end]) {
             Ok((cfg, _)) if cfg.magic == MAGIC && cfg.validate() => {
-                info!("config: loaded from flash (device_id={})", cfg.bacnet.device_id);
+                info!(
+                    "config: loaded from flash (device_id={})",
+                    cfg.bacnet.device_id
+                );
                 cfg
             }
             Ok((cfg, _)) => {
@@ -93,7 +93,10 @@ impl ConfigManager {
         };
 
         // Erase the sector
-        if let Err(_) = self.flash.blocking_erase(CONFIG_OFFSET, CONFIG_OFFSET + SECTOR_SIZE as u32) {
+        if let Err(_) = self
+            .flash
+            .blocking_erase(CONFIG_OFFSET, CONFIG_OFFSET + SECTOR_SIZE as u32)
+        {
             error!("config: flash erase error");
             return;
         }
@@ -102,7 +105,10 @@ impl ConfigManager {
         // we use the full json_buf padded with 0xFF which is the erased state)
         // Round up to next 256-byte page boundary
         let aligned_len = (json_len + 255) & !255;
-        if let Err(_) = self.flash.blocking_write(CONFIG_OFFSET, &json_buf[..aligned_len]) {
+        if let Err(_) = self
+            .flash
+            .blocking_write(CONFIG_OFFSET, &json_buf[..aligned_len])
+        {
             error!("config: flash write error");
             return;
         }

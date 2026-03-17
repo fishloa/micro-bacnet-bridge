@@ -1,8 +1,8 @@
 #![no_std]
 #![no_main]
 
-mod bacnet_ip;
 mod bacnet_ffi;
+mod bacnet_ip;
 mod bridge;
 mod config;
 mod core1;
@@ -53,13 +53,10 @@ async fn main(spawner: Spawner) {
     spi_cfg.frequency = 40_000_000; // 40 MHz — W5500 supports up to 80 MHz
 
     let spi_bus = Spi::new(
-        p.SPI0,
-        p.PIN_18, // SCK
+        p.SPI0, p.PIN_18, // SCK
         p.PIN_19, // MOSI
         p.PIN_16, // MISO
-        p.DMA_CH0,
-        p.DMA_CH1,
-        spi_cfg,
+        p.DMA_CH0, p.DMA_CH1, spi_cfg,
     );
 
     let cs = Output::new(p.PIN_17, Level::High);
@@ -74,25 +71,24 @@ async fn main(spawner: Spawner) {
 
     let wiznet_state = WIZNET_STATE.init(embassy_net_wiznet::State::new());
 
-    let (w5500_device, w5500_runner) =
-        embassy_net_wiznet::new::<4, 4, W5500, _, _, _>(
-            mac_addr,
-            wiznet_state,
-            spi_dev,
-            w5500_int,
-            w5500_rst,
-        )
-        .await
-        .expect("W5500 init failed");
+    let (w5500_device, w5500_runner) = embassy_net_wiznet::new::<4, 4, W5500, _, _, _>(
+        mac_addr,
+        wiznet_state,
+        spi_dev,
+        w5500_int,
+        w5500_rst,
+    )
+    .await
+    .expect("W5500 init failed");
 
     // Spawn the W5500 driver runner task
     spawner.spawn(w5500_task(w5500_runner)).unwrap();
 
     // ---- Flash + config ----
-    let flash = embassy_rp::flash::Flash::<_, embassy_rp::flash::Async, { config::FLASH_SIZE }>::new(
-        p.FLASH,
-        p.DMA_CH2,
-    );
+    let flash =
+        embassy_rp::flash::Flash::<_, embassy_rp::flash::Async, { config::FLASH_SIZE }>::new(
+            p.FLASH, p.DMA_CH2,
+        );
     let mut cfg_mgr = config::ConfigManager::new(flash);
     let bridge_config = cfg_mgr.load();
     info!(
@@ -130,7 +126,8 @@ async fn main(spawner: Spawner) {
     let random_seed = rosc_random_seed();
 
     let stack_resources = STACK_RESOURCES.init(StackResources::new());
-    let (stack, stack_runner) = embassy_net::new(w5500_device, net_config, stack_resources, random_seed);
+    let (stack, stack_runner) =
+        embassy_net::new(w5500_device, net_config, stack_resources, random_seed);
 
     // Leak the stack so tasks can hold 'static references
     let stack: Stack<'static> = unsafe { core::mem::transmute(stack) };
@@ -175,7 +172,9 @@ async fn w5500_task(
 }
 
 #[embassy_executor::task]
-async fn net_task(mut runner: embassy_net::Runner<'static, embassy_net_wiznet::Device<'static>>) -> ! {
+async fn net_task(
+    mut runner: embassy_net::Runner<'static, embassy_net_wiznet::Device<'static>>,
+) -> ! {
     runner.run().await
 }
 

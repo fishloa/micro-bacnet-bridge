@@ -75,7 +75,10 @@ pub struct ObjectId {
 
 impl ObjectId {
     pub fn new(object_type: ObjectType, instance: u32) -> Self {
-        Self { object_type, instance }
+        Self {
+            object_type,
+            instance,
+        }
     }
 
     /// Encode as a 32-bit BACnet object identifier value:
@@ -88,7 +91,10 @@ impl ObjectId {
     pub fn from_raw(raw: u32) -> Option<Self> {
         let type_code = ((raw >> 22) & 0x3FF) as u16;
         let instance = raw & 0x003F_FFFF;
-        ObjectType::from_code(type_code).map(|t| Self { object_type: t, instance })
+        ObjectType::from_code(type_code).map(|t| Self {
+            object_type: t,
+            instance,
+        })
     }
 }
 
@@ -385,7 +391,10 @@ mod tests {
     fn apdu_type_from_byte() {
         assert_eq!(ApduType::from_byte(0x00), Some(ApduType::ConfirmedRequest));
         assert_eq!(ApduType::from_byte(0x0F), Some(ApduType::ConfirmedRequest));
-        assert_eq!(ApduType::from_byte(0x10), Some(ApduType::UnconfirmedRequest));
+        assert_eq!(
+            ApduType::from_byte(0x10),
+            Some(ApduType::UnconfirmedRequest)
+        );
         assert_eq!(ApduType::from_byte(0x20), Some(ApduType::SimpleAck));
         assert_eq!(ApduType::from_byte(0x30), Some(ApduType::ComplexAck));
         assert_eq!(ApduType::from_byte(0x50), Some(ApduType::Error));
@@ -398,7 +407,10 @@ mod tests {
     fn service_choice_confirmed_codes() {
         assert_eq!(ServiceChoice::ReadProperty.confirmed_code(), Some(12));
         assert_eq!(ServiceChoice::WriteProperty.confirmed_code(), Some(15));
-        assert_eq!(ServiceChoice::ReadPropertyMultiple.confirmed_code(), Some(14));
+        assert_eq!(
+            ServiceChoice::ReadPropertyMultiple.confirmed_code(),
+            Some(14)
+        );
         assert_eq!(ServiceChoice::SubscribeCOV.confirmed_code(), Some(5));
         assert_eq!(ServiceChoice::WhoIs.confirmed_code(), None);
     }
