@@ -61,14 +61,15 @@ pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<BridgeConfig>> = Mutex:
 // Concurrency / buffer constants
 // ---------------------------------------------------------------------------
 
-/// Number of concurrent HTTP connections (pool_size for web_task).
-pub const WEB_TASK_POOL_SIZE: usize = 5;
+/// Number of concurrent HTTP connections.
+/// RP2350 has 520 KB SRAM; 8 workers at ~10 KB each is well within budget.
+pub const WEB_TASK_POOL_SIZE: usize = 8;
 
 /// Per-connection TCP receive buffer.
 const TCP_RX_BUF: usize = 2048;
 /// Per-connection TCP transmit buffer.
 const TCP_TX_BUF: usize = 4096;
-/// picoserve HTTP parse/body buffer — must fit the largest JSON PUT body.
+/// picoserve HTTP parse/body buffer.
 const HTTP_BUF: usize = 4096;
 
 // ---------------------------------------------------------------------------

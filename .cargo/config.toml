@@ -1,5 +1,5 @@
-[target.thumbv6m-none-eabi]
-runner = "elf2uf2-rs -d"
+[build]
+target = "thumbv8m.main-none-eabihf"
 
 [target."thumbv8m.main-none-eabihf"]
 runner = "elf2uf2-rs -d"

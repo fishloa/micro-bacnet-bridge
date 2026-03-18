@@ -10,11 +10,16 @@
 //!
 //! If MQTT is not enabled in config the task returns immediately.
 //!
-//! # Config fields consumed
-//! The task reads `BridgeConfig` at startup. For now the relevant settings are
-//! inferred from the existing `BridgeConfig` struct — broker host, port,
-//! keep-alive and topic prefix are supplied as compile-time constants that can
-//! be replaced by persisted config fields in a future schema revision.
+//! # TLS support
+//! When `config.mqtt.tls_enabled` is true the TCP socket is wrapped with
+//! `embedded-tls` (`TlsConnection`) before the MQTT CONNECT packet is sent.
+//! Certificate verification is intentionally skipped (`UnsecureProvider`) for
+//! now — a CA cert upload path is a future TODO.  The TLS buffers (4 KB rx +
+//! 4 KB tx) live on the stack; RP2350's 520 KB SRAM makes this comfortable.
+//!
+//! The MQTT read/write logic is shared between plain-TCP and TLS sessions via
+//! the `mqtt_session` helper which is generic over `embedded_io_async::Read +
+//! Write`.
 //!
 //! # Socket usage
 //! Uses a single TCP socket for the broker connection. DNS resolution uses the
@@ -28,7 +33,10 @@ use bridge_core::mqtt::{
 use defmt::{info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_net::Stack;
+use embassy_rp::clocks::RoscRng;
 use embassy_time::{with_timeout, Duration, Timer};
+use embedded_io_async::{Read as AsyncRead, Write as AsyncWrite};
+use embedded_tls::{Aes128GcmSha256, TlsConfig, TlsConnection, TlsContext, UnsecureProvider};
 use heapless::String;
 
 // ---------------------------------------------------------------------------
@@ -85,6 +93,12 @@ pub async fn mqtt_task(stack: Stack<'static>) {
 
     info!("mqtt: network ready, starting MQTT client");
 
+    // Read TLS flag from config (false by default if config not yet set)
+    let tls_enabled = {
+        let cfg = crate::http::CONFIG.lock().await;
+        cfg.as_ref().map(|c| c.mqtt.tls_enabled).unwrap_or(false)
+    };
+
     loop {
         // Resolve broker IP
         let broker_ip = match crate::dns::resolve(stack, DEFAULT_BROKER_HOST).await {
@@ -97,12 +111,12 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         };
 
         info!(
-            "mqtt: broker {}:{} resolved",
-            DEFAULT_BROKER_HOST, DEFAULT_BROKER_PORT
+            "mqtt: broker {}:{} resolved (tls={})",
+            DEFAULT_BROKER_HOST, DEFAULT_BROKER_PORT, tls_enabled
         );
 
         // Attempt connection and run session
-        run_session(stack, broker_ip, DEFAULT_BROKER_PORT).await;
+        run_session(stack, broker_ip, DEFAULT_BROKER_PORT, tls_enabled).await;
 
         // Brief pause before reconnecting
         warn!("mqtt: disconnected; reconnecting in 10 s");
@@ -114,10 +128,10 @@ pub async fn mqtt_task(stack: Stack<'static>) {
 // Session runner
 // ---------------------------------------------------------------------------
 
-/// Connect to the broker, send CONNECT, then enter the publish loop.
+/// Connect to the broker, optionally wrap with TLS, then run the MQTT session.
 ///
 /// Returns when the connection drops or a fatal error occurs.
-async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
+async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16, tls_enabled: bool) {
     let mut rx_buf = [0u8; RX_BUF];
     let mut tx_buf = [0u8; TX_BUF];
     let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
@@ -136,6 +150,46 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
 
     info!("mqtt: TCP connected");
 
+    if tls_enabled {
+        // TLS path: wrap the TCP socket with embedded-tls.
+        // 4 KB rx + 4 KB tx TLS record buffers on the stack.
+        let mut tls_read_buf = [0u8; 4096];
+        let mut tls_write_buf = [0u8; 4096];
+
+        // TlsConfig has no cipher-suite generic; the cipher suite is chosen
+        // at open() time via the CryptoProvider's associated type.
+        let tls_config = TlsConfig::new();
+
+        // UnsecureProvider skips certificate verification.
+        // RoscRng is the RP2350 hardware RNG, which implements CryptoRngCore.
+        // TODO: add CA cert upload and switch to a verifying provider.
+        let rng = RoscRng;
+        let tls_ctx = TlsContext::new(&tls_config, UnsecureProvider::new::<Aes128GcmSha256>(rng));
+
+        let mut tls: TlsConnection<'_, TcpSocket<'_>, Aes128GcmSha256> =
+            TlsConnection::new(socket, &mut tls_read_buf, &mut tls_write_buf);
+
+        match tls.open(tls_ctx).await {
+            Ok(()) => info!("mqtt: TLS handshake complete"),
+            Err(_) => {
+                warn!("mqtt: TLS handshake failed");
+                return;
+            }
+        }
+
+        mqtt_session(&mut tls).await;
+    } else {
+        // Plain TCP path.
+        mqtt_session(&mut socket).await;
+        socket.close();
+    }
+}
+
+/// Run the MQTT CONNECT → publish loop over any `Read + Write` transport.
+///
+/// This function is generic so that the same logic works for both plain TCP
+/// (`TcpSocket`) and TLS (`TlsConnection`).
+async fn mqtt_session(transport: &mut (impl AsyncRead + AsyncWrite)) {
     // Send MQTT CONNECT
     let mut pkt_buf = [0u8; 128];
     let n = match encode_connect(&mut pkt_buf, CLIENT_ID, KEEP_ALIVE_SECS, None, None) {
@@ -146,7 +200,7 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
         }
     };
 
-    if write_all(&mut socket, &pkt_buf[..n]).await.is_err() {
+    if transport.write_all(&pkt_buf[..n]).await.is_err() {
         warn!("mqtt: failed to send CONNECT");
         return;
     }
@@ -155,7 +209,7 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
     let mut resp_buf = [0u8; 16];
     let connack_result = with_timeout(
         CONNACK_TIMEOUT,
-        read_at_least(&mut socket, &mut resp_buf, 4),
+        read_at_least_generic(transport, &mut resp_buf, 4),
     )
     .await;
 
@@ -179,7 +233,7 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
 
     // Publish HA discovery messages for all known points
     if HA_DISCOVERY_ENABLED {
-        publish_ha_discovery(&mut socket).await;
+        publish_ha_discovery_generic(transport).await;
     }
 
     // Main publish loop
@@ -188,7 +242,7 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
 
     loop {
         // Check for dirty points and publish
-        if publish_dirty_points(&mut socket).await.is_err() {
+        if publish_dirty_points_generic(transport).await.is_err() {
             warn!("mqtt: publish failed; dropping connection");
             break;
         }
@@ -199,7 +253,7 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
             ticks_since_ping = 0;
             let mut ping_buf = [0u8; 2];
             if let Ok(n) = encode_pingreq(&mut ping_buf) {
-                if write_all(&mut socket, &ping_buf[..n]).await.is_err() {
+                if transport.write_all(&ping_buf[..n]).await.is_err() {
                     warn!("mqtt: PINGREQ failed; dropping connection");
                     break;
                 }
@@ -212,9 +266,8 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
     // Attempt clean disconnect
     let mut disc_buf = [0u8; 2];
     if let Ok(n) = encode_disconnect(&mut disc_buf) {
-        let _ = write_all(&mut socket, &disc_buf[..n]).await;
+        let _ = transport.write_all(&disc_buf[..n]).await;
     }
-    socket.close();
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +276,9 @@ async fn run_session(stack: Stack<'static>, broker_ip: [u8; 4], port: u16) {
 
 /// Publish Home Assistant auto-discovery payloads for all currently known
 /// points in the bridge state.
-async fn publish_ha_discovery(socket: &mut TcpSocket<'_>) {
+///
+/// Generic over any `AsyncWrite` transport (plain TCP or TLS).
+async fn publish_ha_discovery_generic(writer: &mut impl AsyncWrite) {
     let state = crate::bridge::BRIDGE_STATE.lock().await;
     let device_count = state.device_count;
     drop(state); // release lock before doing network I/O
@@ -312,8 +367,8 @@ async fn publish_ha_discovery(socket: &mut TcpSocket<'_>) {
                 &payload_buf[..payload_len],
                 true,
             ) {
-                if write_all(socket, &pkt_buf[..n]).await.is_err() {
-                    return; // socket dead
+                if writer.write_all(&pkt_buf[..n]).await.is_err() {
+                    return; // transport dead
                 }
             }
         }
@@ -326,8 +381,9 @@ async fn publish_ha_discovery(socket: &mut TcpSocket<'_>) {
 
 /// Scan bridge state for dirty points, publish changed values, clear dirty flag.
 ///
-/// Returns `Ok(())` on success, `Err(())` if the socket write fails.
-async fn publish_dirty_points(socket: &mut TcpSocket<'_>) -> Result<(), ()> {
+/// Generic over any `AsyncWrite` transport (plain TCP or TLS).
+/// Returns `Ok(())` on success, `Err(())` if the transport write fails.
+async fn publish_dirty_points_generic(writer: &mut impl AsyncWrite) -> Result<(), ()> {
     // Collect dirty points without holding the lock across network I/O
     // (heapless::Vec limits to MAX_DEVICES * MAX_POINTS = 8 * 32 = 256 entries)
     // We iterate one device at a time to avoid large stack allocations.
@@ -375,7 +431,7 @@ async fn publish_dirty_points(socket: &mut TcpSocket<'_>) -> Result<(), ()> {
             let mut pkt_buf = [0u8; 256];
             if let Ok(n) = encode_publish(&mut pkt_buf, topic.as_str(), value_str.as_bytes(), false)
             {
-                write_all(socket, &pkt_buf[..n]).await?;
+                writer.write_all(&pkt_buf[..n]).await.map_err(|_| ())?;
             }
         }
     }
@@ -474,31 +530,21 @@ fn object_type_str(ot: bridge_core::bacnet::ObjectType) -> &'static str {
 }
 
 // ---------------------------------------------------------------------------
-// Low-level TCP I/O helpers
+// Low-level I/O helpers
 // ---------------------------------------------------------------------------
 
-/// Write all bytes in `buf` to the socket, retrying until complete.
-///
-/// Returns `Err(())` on socket error.
-async fn write_all(socket: &mut TcpSocket<'_>, buf: &[u8]) -> Result<(), ()> {
-    use embedded_io_async::Write;
-    socket.write_all(buf).await.map_err(|_| ())
-}
-
-/// Read at least `min_len` bytes into `buf` from the socket.
+/// Read at least `min_len` bytes into `buf` from any `AsyncRead` transport.
 ///
 /// Returns the number of bytes read (which may be more than `min_len` if the
-/// socket delivered a larger chunk), or `Err(())` on socket error / closure.
-async fn read_at_least(
-    socket: &mut TcpSocket<'_>,
+/// transport delivered a larger chunk), or `Err(())` on error / closure.
+async fn read_at_least_generic(
+    reader: &mut impl AsyncRead,
     buf: &mut [u8],
     min_len: usize,
 ) -> Result<usize, ()> {
-    #[allow(unused_imports)]
-    use embedded_io_async::Read;
     let mut total = 0;
     while total < min_len {
-        let n = socket.read(&mut buf[total..]).await.map_err(|_| ())?;
+        let n = reader.read(&mut buf[total..]).await.map_err(|_| ())?;
         if n == 0 {
             return Err(()); // connection closed
         }

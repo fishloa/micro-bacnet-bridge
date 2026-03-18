@@ -8,27 +8,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Keep a single consistent Rust toolchain version across all jobs
   RUST_TOOLCHAIN: stable
 
 jobs:
   build:
-    name: Build firmware (${{ matrix.board }})
+    name: Build firmware (pico2)
     runs-on: ubuntu-latest
-
-    strategy:
-      fail-fast: false
-      matrix:
-        board: [pico, pico2]
-        include:
-          - board: pico
-            target: thumbv6m-none-eabi
-            features: board-pico
-            elf_path: target/thumbv6m-none-eabi/release/firmware
-          - board: pico2
-            target: thumbv8m.main-none-eabihf
-            features: board-pico2
-            elf_path: target/thumbv8m.main-none-eabihf/release/firmware
 
     steps:
       - name: Checkout (with submodules)
@@ -41,7 +26,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: ${{ matrix.target }}
+          targets: thumbv8m.main-none-eabihf
           components: rustfmt, clippy
 
       # ── Cargo cache ─────────────────────────────────────────────────────────
@@ -60,9 +45,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target
-          key: ${{ runner.os }}-cargo-target-${{ env.RUST_TOOLCHAIN }}-${{ matrix.board }}-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-target-${{ env.RUST_TOOLCHAIN }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-target-${{ env.RUST_TOOLCHAIN }}-${{ matrix.board }}-
             ${{ runner.os }}-cargo-target-${{ env.RUST_TOOLCHAIN }}-
             ${{ runner.os }}-cargo-target-
 
@@ -98,56 +82,51 @@ jobs:
       - name: Embed assets into firmware
         run: python3 tools/embed_assets.py
 
-      # ── Host-target tests (bridge-core, only run once — on the pico matrix leg) ──
+      # ── Host-target tests (bridge-core) ──────────────────────────────────────
       - name: Run host tests (bridge-core)
-        if: matrix.board == 'pico'
-        run: cargo test -p bridge-core
+        run: cargo test -p bridge-core --target x86_64-unknown-linux-gnu
 
-      # ── Lint (only run once — on the pico matrix leg) ────────────────────────
+      # ── Lint ─────────────────────────────────────────────────────────────────
       - name: Check formatting
-        if: matrix.board == 'pico'
         run: cargo fmt --all -- --check
 
       - name: Clippy (host)
-        if: matrix.board == 'pico'
-        run: cargo clippy -p bridge-core -- -D warnings
+        run: cargo clippy -p bridge-core --target x86_64-unknown-linux-gnu -- -D warnings
 
       # ── Firmware build (no_std) ───────────────────────────────────────────────
-      - name: Build firmware (release, ${{ matrix.board }})
-        run: cargo build -p firmware --release --target ${{ matrix.target }} --features ${{ matrix.features }} --no-default-features
+      - name: Build firmware (release)
+        run: cargo build -p firmware --release
 
       # ── Convert ELF → UF2 ────────────────────────────────────────────────────
       - name: Install elf2uf2-rs
         run: cargo install elf2uf2-rs --locked
-        # Only attempt conversion if the tool can be installed; non-fatal for PRs.
         continue-on-error: true
 
       - name: Convert ELF to UF2
         run: |
-          ELF="${{ matrix.elf_path }}"
+          ELF="target/thumbv8m.main-none-eabihf/release/firmware"
           VERSION="0.1.${{ github.run_number }}"
-          UF2="target/micro-bacnet-bridge-${VERSION}-${{ matrix.board }}.uf2"
+          UF2="target/micro-bacnet-bridge-${VERSION}.uf2"
           if command -v elf2uf2-rs &>/dev/null && [ -f "$ELF" ]; then
             elf2uf2-rs "$ELF" "$UF2"
             echo "UF2_AVAILABLE=true" >> "$GITHUB_ENV"
             echo "UF2_PATH=$UF2" >> "$GITHUB_ENV"
-            echo "FW_VERSION=$VERSION" >> "$GITHUB_ENV"
           else
             echo "UF2_AVAILABLE=false" >> "$GITHUB_ENV"
           fi
 
       # ── Upload artifacts ─────────────────────────────────────────────────────
-      - name: Upload firmware ELF (${{ matrix.board }})
+      - name: Upload firmware ELF
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-elf-${{ matrix.board }}
-          path: ${{ matrix.elf_path }}
+          name: firmware-elf
+          path: target/thumbv8m.main-none-eabihf/release/firmware
           if-no-files-found: error
 
-      - name: Upload firmware UF2 (${{ matrix.board }})
+      - name: Upload firmware UF2
         if: env.UF2_AVAILABLE == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-uf2-${{ matrix.board }}
+          name: firmware-uf2
           path: ${{ env.UF2_PATH }}
           if-no-files-found: warn

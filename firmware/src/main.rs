@@ -34,9 +34,9 @@ use {defmt_rtt as _, panic_probe as _};
 // ---------------------------------------------------------------------------
 
 /// Number of sockets the network stack can hold simultaneously.
-/// HTTP (1) + mDNS (1) + BACnet/IP (1) + DHCP internal (1) + NTP (1) +
-/// SNMP (1) + MQTT/TCP (1) + DNS/UDP (1) + Syslog/UDP (1) + spare (1) = 10
-const SOCKET_COUNT: usize = 10;
+/// HTTP (8 workers) + mDNS (1) + BACnet/IP (1) + DHCP internal (1) + NTP (1) +
+/// SNMP (1) + MQTT/TCP (1) + DNS/UDP (1) + Syslog/UDP (1) = 16
+const SOCKET_COUNT: usize = 16;
 
 static STACK_RESOURCES: StaticCell<StackResources<SOCKET_COUNT>> = StaticCell::new();
 static WIZNET_STATE: StaticCell<embassy_net_wiznet::State<4, 4>> = StaticCell::new();
@@ -235,38 +235,19 @@ async fn net_task(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Derive a random u64 seed from chip-specific entropy sources.
+/// Derive a random u64 seed from the RP2350 hardware TRNG.
+///
+/// The RP2350 has a dedicated hardware TRNG (Arm TrustZone RNG IP).
+/// Reading RNG_DATA yields 32 bits of entropy per read.
 ///
 /// This is not cryptographically strong but provides enough entropy for
 /// the network stack's ephemeral port selection.
 fn rosc_random_seed() -> u64 {
-    #[cfg(feature = "board-pico")]
-    {
-        // RP2040: ROSC base = 0x40060000; RANDOMBIT register offset = 0x1C.
-        // Bit 31 of the RANDOMBIT register is the random bit.
-        const RANDOMBIT_ADDR: *const u32 = 0x4006_001C as *const u32;
-        let mut seed: u64 = 0;
-        for i in 0..64u64 {
-            let val = unsafe { core::ptr::read_volatile(RANDOMBIT_ADDR) };
-            let bit = ((val >> 31) & 1) as u64;
-            seed |= bit << i;
-            for _ in 0..16 {
-                cortex_m::asm::nop();
-            }
-        }
-        seed ^ 0xDEAD_BEEF_CAFE_1234
-    }
-
-    #[cfg(feature = "board-pico2")]
-    {
-        // RP2350: TRNG base = 0x4012_0000; RNG_DATA register offset = 0x204.
-        // The RP2350 has a dedicated hardware TRNG (Arm TrustZone RNG IP).
-        // Reading RNG_DATA yields 32 bits of entropy per read.
-        const RNG_DATA_ADDR: *const u32 = 0x4012_0204 as *const u32;
-        let lo = unsafe { core::ptr::read_volatile(RNG_DATA_ADDR) } as u64;
-        let hi = unsafe { core::ptr::read_volatile(RNG_DATA_ADDR) } as u64;
-        (hi << 32) | lo
-    }
+    // RP2350: TRNG base = 0x4012_0000; RNG_DATA register offset = 0x204.
+    const RNG_DATA_ADDR: *const u32 = 0x4012_0204 as *const u32;
+    let lo = unsafe { core::ptr::read_volatile(RNG_DATA_ADDR) } as u64;
+    let hi = unsafe { core::ptr::read_volatile(RNG_DATA_ADDR) } as u64;
+    (hi << 32) | lo
 }
 
 /// Convert a subnet mask (e.g. [255,255,255,0]) to a CIDR prefix length.

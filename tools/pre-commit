@@ -10,16 +10,13 @@ echo "pre-commit: formatting..."
 cargo fmt --all -- --check || { echo "FAILED: Run 'cargo fmt --all' to fix."; exit 1; }
 
 echo "pre-commit: clippy..."
-cargo clippy -p bridge-core -- -D warnings || { echo "FAILED: clippy."; exit 1; }
+cargo clippy -p bridge-core --target "$(rustc -vV | grep host | cut -d' ' -f2)" -- -D warnings || { echo "FAILED: clippy."; exit 1; }
 
 echo "pre-commit: tests..."
-cargo test -p bridge-core --quiet || { echo "FAILED: tests."; exit 1; }
+cargo test -p bridge-core --target "$(rustc -vV | grep host | cut -d' ' -f2)" --quiet || { echo "FAILED: tests."; exit 1; }
 
-echo "pre-commit: firmware check (pico)..."
-cargo check -p firmware --target thumbv6m-none-eabi --quiet 2>/dev/null || { echo "FAILED: firmware pico."; exit 1; }
-
-echo "pre-commit: firmware check (pico2)..."
-cargo check -p firmware --target thumbv8m.main-none-eabihf --features board-pico2 --no-default-features --quiet 2>/dev/null || { echo "FAILED: firmware pico2."; exit 1; }
+echo "pre-commit: firmware check..."
+cargo check -p firmware --quiet 2>/dev/null || { echo "FAILED: firmware."; exit 1; }
 
 echo "pre-commit: frontend build..."
 (cd frontend && bun run build 2>&1 | tail -1 | grep -q "done") || { echo "FAILED: frontend build."; exit 1; }

@@ -28,7 +28,7 @@
 		enabled: false, broker: '', port: 1883, client_id: 'bacnet-bridge',
 		username: '', password: '', topic_prefix: 'bacnet',
 		ha_discovery_enabled: false, ha_discovery_prefix: 'homeassistant',
-		publish_points: []
+		publish_points: [], tls_enabled: false
 	});
 	let snmp: SnmpConfig = $state({
 		enabled: false, community: 'public'
@@ -293,6 +293,10 @@
 							<tr>
 								<td class="field-label">Port</td>
 								<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={mqtt.port} /></td>
+							</tr>
+							<tr>
+								<td class="field-label">TLS (port 8883)</td>
+								<td><input type="checkbox" bind:checked={mqtt.tls_enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
 							</tr>
 							<tr>
 								<td class="field-label">Client ID</td>

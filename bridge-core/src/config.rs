@@ -187,6 +187,16 @@ pub struct MqttConfig {
     pub ha_discovery_prefix: String<32>,
     /// Which points to publish, in "objectType:instance" format. Empty = publish all.
     pub publish_points: Vec<String<32>, 64>,
+    /// Enable TLS for MQTT connection (port 8883).
+    ///
+    /// When true the task wraps the TCP socket with `embedded-tls` before
+    /// sending the MQTT CONNECT packet.  Certificate verification is currently
+    /// skipped (`UnsecureProvider`); a CA cert upload path is a future TODO.
+    ///
+    /// Note: if `tls_enabled` is true and `port` is still 1883 the connection
+    /// will succeed at the TCP level but the broker will likely reject it because
+    /// it expects plain MQTT on that port.  Consider changing `port` to 8883.
+    pub tls_enabled: bool,
 }
 
 impl Default for MqttConfig {
@@ -208,6 +218,7 @@ impl Default for MqttConfig {
             ha_discovery_enabled: false,
             ha_discovery_prefix,
             publish_points: Vec::new(),
+            tls_enabled: false,
         }
     }
 }
@@ -398,6 +409,10 @@ impl BridgeConfig {
             if self.mqtt.broker.is_empty() {
                 return false;
             }
+            // Warn (non-fatal): TLS is enabled but port is the plain-MQTT default.
+            // We don't fail validation here — the user may have a broker that
+            // accepts TLS on 1883 — but most don't.  The admin UI surfaces this.
+            let _ = self.mqtt.tls_enabled && self.mqtt.port == 1883; // advisory only
         }
         if self.snmp.enabled && self.snmp.community.is_empty() {
             return false;

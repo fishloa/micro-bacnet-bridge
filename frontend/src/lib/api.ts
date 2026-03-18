@@ -85,6 +85,8 @@ export interface MqttConfig {
 	ha_discovery_enabled: boolean;
 	ha_discovery_prefix: string;
 	publish_points: string[];
+	/** Enable TLS for the MQTT connection (default port 8883). */
+	tls_enabled: boolean;
 }
 
 export interface SnmpConfig {
@@ -297,6 +299,7 @@ const MOCK_MQTT_CONFIG: MqttConfig = {
 	ha_discovery_enabled: false,
 	ha_discovery_prefix: 'homeassistant',
 	publish_points: [],
+	tls_enabled: false,
 };
 
 const MOCK_SNMP_CONFIG: SnmpConfig = {

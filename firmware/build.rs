@@ -3,69 +3,31 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
-    // ---- Build version: {major}.{minor}.{build}-{board} ----
+    // ---- Build version: {major}.{minor}.{build}-pico2 ----
     // Semver: major.minor from Cargo.toml, build number from CI (auto-increments).
     // GITHUB_RUN_NUMBER provides a monotonically increasing integer per workflow.
     // Local builds use 0 as the build number.
-    // Example CI output: "0.1.42-pico", "0.1.42-pico2"
+    // Example CI output: "0.1.42-pico2"
     let pkg_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
     let build_number = env::var("GITHUB_RUN_NUMBER").unwrap_or_else(|_| "0".into());
-    let board_name = if env::var("CARGO_FEATURE_BOARD_PICO2").is_ok() {
-        "pico2"
-    } else {
-        "pico"
-    };
     // Extract major.minor from pkg_version (drop the patch digit, replace with build number)
     let parts: Vec<&str> = pkg_version.split('.').collect();
     let major = parts.first().unwrap_or(&"0");
     let minor = parts.get(1).unwrap_or(&"1");
-    let full_version = format!("{major}.{minor}.{build_number}-{board_name}");
+    let full_version = format!("{major}.{minor}.{build_number}-pico2");
     println!("cargo:rustc-env=FIRMWARE_VERSION={full_version}");
-    println!("cargo:rustc-env=FIRMWARE_BOARD={board_name}");
-    // Select the correct memory layout based on the board feature.
-    //
-    // Exactly one of board-pico / board-pico2 must be enabled; the build
-    // will fail with a missing-file error if neither is set.
-    let board_pico = env::var("CARGO_FEATURE_BOARD_PICO").is_ok();
-    let board_pico2 = env::var("CARGO_FEATURE_BOARD_PICO2").is_ok();
+    println!("cargo:rustc-env=FIRMWARE_BOARD=pico2");
 
-    // c_cpu_flags: CPU/arch flags to pass to arm-none-eabi-gcc.
-    //   RP2040 needs -mcpu=cortex-m0plus explicitly (thumbv6m is too generic).
-    //   RP2350 uses -march=armv8-m.main+fp (from the target triple); adding
-    //   -mcpu=cortex-m33 alongside it triggers a gcc conflict warning, so we
-    //   omit -mcpu for RP2350 and let the -march from the triple suffice.
-    let (memory_file, c_cpu_flags, c_target) = match (board_pico, board_pico2) {
-        (true, false) => (
-            "memory-rp2040.x",
-            vec!["-mcpu=cortex-m0plus"],
-            "thumbv6m-none-eabi",
-        ),
-        (false, true) => (
-            "memory-rp2350.x",
-            vec![] as Vec<&str>,
-            "thumbv8m.main-none-eabihf",
-        ),
-        (true, true) => panic!("only one of board-pico / board-pico2 may be enabled at once"),
-        (false, false) => panic!("one of board-pico / board-pico2 must be enabled"),
-    };
-
-    // Copy the selected memory layout to OUT_DIR so the linker finds it as memory.x
+    // Copy memory layout to OUT_DIR so the linker finds it as memory.x
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let memory_x =
-        fs::read_to_string(memory_file).unwrap_or_else(|_| panic!("{memory_file} not found"));
+    let memory_x = fs::read_to_string("memory.x").unwrap_or_else(|_| panic!("memory.x not found"));
     fs::write(out.join("memory.x"), memory_x).unwrap();
     println!("cargo:rustc-link-search={}", out.display());
-    println!("cargo:rerun-if-changed={memory_file}");
-    println!("cargo:rerun-if-changed=memory-rp2040.x");
-    println!("cargo:rerun-if-changed=memory-rp2350.x");
+    println!("cargo:rerun-if-changed=memory.x");
 
     // Linker flags for embedded
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
-    // link-rp.x is only emitted by embassy-rp for RP2040; RP2350 doesn't need it.
-    if board_pico {
-        println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
-    }
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 
     // Compile C sources with arm-none-eabi-gcc
@@ -89,17 +51,10 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=../csrc/bacnet_bridge.h");
 
-    // RP2350 uses hard-float ABI; RP2040 does not have FPU.
-    let mut fpu_flags: Vec<&str> = Vec::new();
-    if board_pico2 {
-        fpu_flags.push("-mfloat-abi=hard");
-        fpu_flags.push("-mfpu=fpv5-sp-d16");
-    }
-
     let mut build = cc::Build::new();
     build
         .compiler("arm-none-eabi-gcc")
-        .target(c_target)
+        .target("thumbv8m.main-none-eabihf")
         .include("../csrc")
         .include("../lib/bacnet-stack/src")
         .file("../csrc/ipc_c.c")
@@ -107,6 +62,8 @@ fn main() {
         .file("../csrc/bacnet_port.c")
         .file("../csrc/core1_entry.c")
         .flag("-mthumb")
+        .flag("-mfloat-abi=hard")
+        .flag("-mfpu=fpv5-sp-d16")
         .flag("-Os")
         .flag("-ffreestanding")
         .flag("-nostdlib")
@@ -117,14 +74,6 @@ fn main() {
         // Previously `.warnings(false)` silenced all diagnostics; now the `-Wall`
         // and `-Wextra` flags above take effect.
         .warnings(true);
-
-    for flag in &c_cpu_flags {
-        build.flag(flag);
-    }
-
-    for flag in &fpu_flags {
-        build.flag(flag);
-    }
 
     build.compile("bacnet");
 }
