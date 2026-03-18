@@ -141,8 +141,15 @@ pub struct RingBuffer<const N: usize> {
 }
 
 impl<const N: usize> RingBuffer<N> {
-    // Ensure N is non-zero (checked at compile time via array size).
-    const _CHECK: () = assert!(N > 0, "RingBuffer size N must be > 0");
+    // Ensure N is a power of two (checked at compile time).
+    // Power-of-two N is required so that slot indices can be computed with a
+    // bitwise AND (`index & (N-1)`) instead of a modulo, and so that the
+    // C-side `ipc_ring_t` (which uses the same convention) stays in sync.
+    // Valid sizes: 1, 2, 4, 8, 16, 32, …
+    const _CHECK: () = assert!(
+        N > 0 && (N & (N - 1)) == 0,
+        "RingBuffer: N must be a power of two"
+    );
 
     /// Create an empty ring buffer.
     pub const fn new() -> Self {
@@ -212,6 +219,11 @@ impl<const N: usize> RingBuffer<N> {
         core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
         let slot = (t as usize) % N;
         let pdu = self.data[slot];
+        // Release fence: the data read must be fully visible before we advance
+        // the tail pointer. Without this, the producer (on the other core)
+        // could observe the updated tail and overwrite the slot before we have
+        // finished reading the data from it.
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
         // Advance tail monotonically.
         unsafe { write_volatile(&mut self.tail, t.wrapping_add(1)) };
         Some(pdu)

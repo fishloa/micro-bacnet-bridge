@@ -77,7 +77,22 @@ impl NpduHeader {
 /// Encode an NPDU header + APDU payload into `buf`.
 ///
 /// Returns the number of bytes written.
+///
+/// # Errors
+///
+/// Returns `EncodeError::InvalidValue` if `dest_mac_len` or `src_mac_len`
+/// exceeds `MAX_MAC_LEN` (7). Both values are used as slice indices into the
+/// corresponding `[u8; 7]` array, so values > 7 would panic at runtime without
+/// this check.
 pub fn encode_npdu(header: &NpduHeader, apdu: &[u8], buf: &mut [u8]) -> Result<usize, EncodeError> {
+    // Validate MAC lengths before using them as slice indices.
+    if header.dest_present && header.dest_mac_len as usize > MAX_MAC_LEN {
+        return Err(EncodeError::InvalidValue);
+    }
+    if header.src_present && header.src_mac_len as usize > MAX_MAC_LEN {
+        return Err(EncodeError::InvalidValue);
+    }
+
     let mut ctrl: u8 = 0;
     if header.is_network_layer_msg {
         ctrl |= CTRL_NET_LAYER_MSG;
@@ -365,6 +380,39 @@ mod tests {
         assert_eq!(
             encode_npdu(&hdr, &apdu, &mut buf).unwrap_err(),
             EncodeError::BufferTooSmall
+        );
+    }
+
+    #[test]
+    fn test_encode_bad_dest_mac_len_returns_error() {
+        // dest_mac_len > MAX_MAC_LEN (7) must return InvalidValue, not panic.
+        let mut hdr = local_header();
+        hdr.dest_present = true;
+        hdr.dest_net = 1;
+        hdr.dest_mac_len = 8; // one past the end of the [u8; 7] array
+        hdr.hop_count = 0;
+        let apdu: &[u8] = &[];
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            encode_npdu(&hdr, apdu, &mut buf).unwrap_err(),
+            EncodeError::InvalidValue,
+            "dest_mac_len=8 should return InvalidValue"
+        );
+    }
+
+    #[test]
+    fn test_encode_bad_src_mac_len_returns_error() {
+        // src_mac_len > MAX_MAC_LEN (7) must return InvalidValue, not panic.
+        let mut hdr = local_header();
+        hdr.src_present = true;
+        hdr.src_net = 2;
+        hdr.src_mac_len = 255; // wildly out of range
+        let apdu: &[u8] = &[];
+        let mut buf = [0u8; 64];
+        assert_eq!(
+            encode_npdu(&hdr, apdu, &mut buf).unwrap_err(),
+            EncodeError::InvalidValue,
+            "src_mac_len=255 should return InvalidValue"
         );
     }
 

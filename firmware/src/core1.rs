@@ -6,6 +6,7 @@
 
 use embassy_rp::multicore::{spawn_core1, Stack};
 use embassy_rp::peripherals::CORE1;
+use portable_atomic::AtomicU32;
 
 // ---------------------------------------------------------------------------
 // Watchdog heartbeat (C2)
@@ -20,6 +21,13 @@ use embassy_rp::peripherals::CORE1;
 ///
 /// Declared `#[no_mangle]` so the C symbol `core1_heartbeat` resolves here.
 ///
+/// `AtomicU32` has `repr(transparent)` layout (same as `u32`), so the C side
+/// accessing it as `extern volatile uint32_t core1_heartbeat` sees the same
+/// memory.  Core 1 is the only writer (via `core1_heartbeat++`), which is a
+/// non-atomic load-add-store on Cortex-M0+, but since there is exactly one
+/// writer and one reader, a torn read is harmless — Core 0 merely sees either
+/// the old or new value.  Relaxed ordering is therefore correct.
+///
 /// # TODO
 /// - Check `core1_heartbeat` periodically in the Core 0 supervisor task;
 ///   if stale for > 200 ms, trigger watchdog reset via RP2040 WATCHDOG_CTRL.
@@ -27,7 +35,7 @@ use embassy_rp::peripherals::CORE1;
 ///   `embassy_rp::watchdog::Watchdog` with a 500 ms window; Core 0 feeds
 ///   the watchdog only when Core 1's heartbeat is live.
 #[no_mangle]
-pub static mut core1_heartbeat: u32 = 0;
+pub static core1_heartbeat: AtomicU32 = AtomicU32::new(0);
 
 /// Stack allocated for Core 1. 8 KB is sufficient for the C MS/TP state machine.
 static mut CORE1_STACK: Stack<8192> = Stack::new();

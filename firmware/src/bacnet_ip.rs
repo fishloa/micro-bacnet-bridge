@@ -157,8 +157,9 @@ fn handle_incoming(data: &[u8], remote: IpEndpoint) {
     }
 
     pdu.pdu_type = if apdu.is_empty() { 0xFF } else { apdu[0] };
-    pdu.data_len = apdu.len() as u16;
-    pdu.data[..apdu.len()].copy_from_slice(apdu);
+    let data_len = apdu.len().min(bridge_core::ipc::PDU_MAX_DATA);
+    pdu.data_len = data_len as u16;
+    pdu.data[..data_len].copy_from_slice(&apdu[..data_len]);
 
     let ring = ipc::ip_to_mstp();
     if !ring.push(&pdu) {
@@ -189,7 +190,8 @@ fn encode_bvlc_pdu(pdu: &BacnetPdu, buf: &mut [u8]) -> Option<usize> {
         npdu_hdr.src_mac = pdu.source_mac;
     }
 
-    let apdu = &pdu.data[..pdu.data_len as usize];
+    let data_len = (pdu.data_len as usize).min(bridge_core::ipc::PDU_MAX_DATA);
+    let apdu = &pdu.data[..data_len];
 
     // Leave room for 4-byte BVLC header
     let npdu_len = match encode_npdu(&npdu_hdr, apdu, &mut buf[4..]) {

@@ -90,12 +90,41 @@ pub struct ObjectId {
     pub instance: u32,
 }
 
+/// Maximum valid BACnet object instance number (22-bit field, ASHRAE 135 §12.11).
+/// Values 0x003F_FFFF and 0x003F_FFFE are reserved; usable range is 0..=4194302.
+pub const INSTANCE_MAX: u32 = 0x003F_FFFE;
+
 impl ObjectId {
+    /// Create an `ObjectId` from a type and instance number.
+    ///
+    /// The `instance` value must be in the range `0..=0x003F_FFFE` (22 bits,
+    /// BACnet instance maximum). Values outside this range are undefined
+    /// behaviour per ASHRAE 135; a `debug_assert!` will catch this in debug
+    /// builds. Use [`ObjectId::try_new`] for a checked, safe alternative.
     pub fn new(object_type: ObjectType, instance: u32) -> Self {
+        debug_assert!(
+            instance <= INSTANCE_MAX,
+            "ObjectId instance {instance} exceeds INSTANCE_MAX (0x003F_FFFE = {INSTANCE_MAX})"
+        );
         Self {
             object_type,
             instance,
         }
+    }
+
+    /// Create an `ObjectId`, returning `None` if `instance` exceeds
+    /// `INSTANCE_MAX` (0x003F_FFFE).
+    ///
+    /// Prefer this over [`ObjectId::new`] when the instance number comes from
+    /// an untrusted source (e.g. decoded from a BACnet packet).
+    pub fn try_new(object_type: ObjectType, instance: u32) -> Option<Self> {
+        if instance > INSTANCE_MAX {
+            return None;
+        }
+        Some(Self {
+            object_type,
+            instance,
+        })
     }
 
     /// Encode as a 32-bit BACnet object identifier value:
@@ -431,6 +460,36 @@ mod tests {
         let recovered = ObjectId::from_raw(raw).unwrap();
         assert_eq!(recovered.object_type, ObjectType::Device);
         assert_eq!(recovered.instance, 389999);
+    }
+
+    #[test]
+    fn test_object_id_max_valid_instance() {
+        // INSTANCE_MAX itself must be accepted by both new() and try_new().
+        let oid = ObjectId::new(ObjectType::AnalogInput, INSTANCE_MAX);
+        assert_eq!(oid.instance, INSTANCE_MAX);
+        let oid2 = ObjectId::try_new(ObjectType::AnalogInput, INSTANCE_MAX);
+        assert!(oid2.is_some());
+        assert_eq!(oid2.unwrap().instance, INSTANCE_MAX);
+    }
+
+    #[test]
+    fn test_object_id_try_new_overflow_returns_none() {
+        // Any instance > INSTANCE_MAX must return None from try_new().
+        assert!(
+            ObjectId::try_new(ObjectType::AnalogInput, INSTANCE_MAX + 1).is_none(),
+            "try_new with instance=INSTANCE_MAX+1 should return None"
+        );
+        assert!(
+            ObjectId::try_new(ObjectType::Device, u32::MAX).is_none(),
+            "try_new with instance=u32::MAX should return None"
+        );
+    }
+
+    #[test]
+    fn test_object_id_try_new_zero_is_valid() {
+        let oid = ObjectId::try_new(ObjectType::BinaryInput, 0);
+        assert!(oid.is_some());
+        assert_eq!(oid.unwrap().instance, 0);
     }
 
     #[test]

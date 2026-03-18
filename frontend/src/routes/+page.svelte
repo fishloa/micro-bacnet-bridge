@@ -2,7 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import PointsPanel from '$lib/PointsPanel.svelte';
 	import { api, connectSSE, pointKey } from '$lib/api';
-	import { points } from '$lib/stores';
+	import { points, deviceId } from '$lib/stores';
 
 	let disconnectSSE: (() => void) | null = null;
 
@@ -10,6 +10,7 @@
 		// Load points from our bridge device (first/primary device)
 		const devices = await api.getDevices();
 		if (devices.length > 0) {
+			$deviceId = devices[0].id;
 			$points = await api.getPoints(devices[0].id);
 		}
 

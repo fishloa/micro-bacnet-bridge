@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-mod bacnet_ffi;
 mod bacnet_ip;
 mod bridge;
 mod config;
@@ -68,9 +67,22 @@ async fn main(spawner: Spawner) {
     let w5500_int = embassy_rp::gpio::Input::new(p.PIN_21, embassy_rp::gpio::Pull::Up);
     let w5500_rst = Output::new(p.PIN_20, Level::High);
 
-    // MAC address: locally administered, derived from RP2040 chip ID
-    // Using a fixed address for now; could read CHIPID for uniqueness.
-    let mac_addr = [0x02, 0xAB, 0xCD, 0x12, 0x34, 0x56];
+    // MAC address: locally administered unicast, derived from ROSC entropy at
+    // boot.  This is not stable across reboots; production firmware should
+    // generate the MAC on first boot, persist it to flash in the config struct,
+    // and load it here instead.
+    //
+    // TODO: Load MAC from flash config (config::BridgeConfig::mac_addr field,
+    //       generated on first boot if all-zero) so the address is stable.
+    let mac_seed = rosc_random_seed();
+    let mac_addr = [
+        0x02, // locally administered, unicast
+        (mac_seed >> 8) as u8,
+        (mac_seed >> 16) as u8,
+        (mac_seed >> 24) as u8,
+        (mac_seed >> 32) as u8,
+        (mac_seed >> 40) as u8,
+    ];
 
     let wiznet_state = WIZNET_STATE.init(embassy_net_wiznet::State::new());
 
@@ -128,12 +140,12 @@ async fn main(spawner: Spawner) {
     // Generate a random seed from the ROSC frequency counter
     let random_seed = rosc_random_seed();
 
-    let stack_resources = STACK_RESOURCES.init(StackResources::new());
-    let (stack, stack_runner) =
+    // STACK_RESOURCES.init() returns &'static mut StackResources, so the
+    // Stack and Runner returned by embassy_net::new() are already Stack<'static>
+    // and Runner<'static, _> — no unsafe transmute needed.
+    let stack_resources: &'static mut _ = STACK_RESOURCES.init(StackResources::new());
+    let (stack, stack_runner): (Stack<'static>, _) =
         embassy_net::new(w5500_device, net_config, stack_resources, random_seed);
-
-    // Leak the stack so tasks can hold 'static references
-    let stack: Stack<'static> = unsafe { core::mem::transmute(stack) };
 
     spawner.spawn(net_task(stack_runner)).unwrap();
     spawner.spawn(http::http_task(stack)).unwrap();

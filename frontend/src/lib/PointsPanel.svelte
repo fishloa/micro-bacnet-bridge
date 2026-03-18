@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { filteredPoints, filterText, activeTab, tabs, points } from './stores';
+	import { filteredPoints, filterText, activeTab, tabs, points, deviceId } from './stores';
 	import { OBJECT_TYPE_INFO, api, pointKey } from './api';
 	import type { BacnetPoint } from './api';
 
@@ -58,7 +58,7 @@
 		} else if (!isNaN(Number(editValue))) {
 			val = Number(editValue);
 		}
-		await api.writePoint(0, editingPoint.objectType, editingPoint.objectInstance, val);
+		await api.writePoint($deviceId, editingPoint.objectType, editingPoint.objectInstance, val);
 		// Update local state
 		const idx = $points.findIndex(
 			pp => pp.objectType === editingPoint!.objectType && pp.objectInstance === editingPoint!.objectInstance
@@ -136,7 +136,7 @@
 								{/if}
 							</td>
 							<td>
-								{#if point.writable && editingPoint?.objectInstance !== point.objectInstance}
+								{#if point.writable && !(editingPoint?.objectType === point.objectType && editingPoint?.objectInstance === point.objectInstance)}
 									<button class="vui-btn vui-btn-sm vui-btn-ghost write-btn" onclick={() => startEdit(point)} title="Write value">✎</button>
 								{/if}
 							</td>

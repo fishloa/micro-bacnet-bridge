@@ -186,24 +186,38 @@ const MOCK_USERS: User[] = [
 
 // --- API functions ---
 
-const IS_DEV = true; // Toggle for mock vs real API
+import { dev } from '$app/environment';
+const IS_DEV = dev;
 
 async function get<T>(path: string, mock: T): Promise<T> {
 	if (IS_DEV) return mock;
-	const res = await fetch(`/api/v1${path}`);
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
-	return res.json();
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 8000);
+	try {
+		const res = await fetch(`/api/v1${path}`, { signal: controller.signal });
+		if (!res.ok) throw new Error(`API error: ${res.status}`);
+		return res.json();
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 async function put<T>(path: string, body: unknown, mock: T): Promise<T> {
 	if (IS_DEV) return mock;
-	const res = await fetch(`/api/v1${path}`, {
-		method: 'PUT',
-		headers: { 'Content-Type': 'application/json' },
-		body: JSON.stringify(body),
-	});
-	if (!res.ok) throw new Error(`API error: ${res.status}`);
-	return res.json();
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 8000);
+	try {
+		const res = await fetch(`/api/v1${path}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		if (!res.ok) throw new Error(`API error: ${res.status}`);
+		return res.json();
+	} finally {
+		clearTimeout(timer);
+	}
 }
 
 export const api = {
@@ -227,6 +241,7 @@ export function pointKey(p: BacnetPoint): string {
 export function connectSSE(onUpdate: (updates: Record<string, number>) => void): () => void {
 	const url = '/api/events';
 	let es: EventSource | null = null;
+	let retryTimer: ReturnType<typeof setTimeout> | null = null;
 
 	function connect() {
 		es = new EventSource(url);
@@ -237,10 +252,14 @@ export function connectSSE(onUpdate: (updates: Record<string, number>) => void):
 		};
 		es.onerror = () => {
 			es?.close();
-			setTimeout(connect, 3000);
+			retryTimer = setTimeout(connect, 3000);
 		};
 	}
 
 	connect();
-	return () => { es?.close(); es = null; };
+	return () => {
+		es?.close();
+		es = null;
+		if (retryTimer) clearTimeout(retryTimer);
+	};
 }

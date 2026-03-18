@@ -139,10 +139,43 @@ impl Default for BridgeConfig {
     }
 }
 
+/// Valid MS/TP baud rates (per BACnet clause 9.3).
+const VALID_BAUD_RATES: [u32; 4] = [9600, 19200, 38400, 76800];
+
+/// Maximum BACnet device instance number (22-bit field, ASHRAE 135 clause 12.11).
+pub const DEVICE_ID_MAX: u32 = 0x003F_FFFE;
+
 impl BridgeConfig {
-    /// Return true if the magic number and version are valid.
+    /// Return true if the magic number, version, and all semantic fields are valid.
+    ///
+    /// Checks:
+    /// - `magic` == `MAGIC`
+    /// - `version` == `CONFIG_VERSION`
+    /// - `bacnet.mstp_mac` <= 127
+    /// - `bacnet.mstp_baud` is one of {9600, 19200, 38400, 76800}
+    /// - `bacnet.device_id` <= 0x003F_FFFE (22-bit BACnet instance max)
+    /// - `bacnet.max_master` >= 1 && <= 127
+    /// - `hostname` is non-empty
     pub fn validate(&self) -> bool {
-        self.magic == MAGIC && self.version == CONFIG_VERSION
+        if self.magic != MAGIC || self.version != CONFIG_VERSION {
+            return false;
+        }
+        if self.bacnet.mstp_mac > 127 {
+            return false;
+        }
+        if !VALID_BAUD_RATES.contains(&self.bacnet.mstp_baud) {
+            return false;
+        }
+        if self.bacnet.device_id > DEVICE_ID_MAX {
+            return false;
+        }
+        if self.bacnet.max_master < 1 || self.bacnet.max_master > 127 {
+            return false;
+        }
+        if self.hostname.is_empty() {
+            return false;
+        }
+        true
     }
 }
 
@@ -231,6 +264,66 @@ mod tests {
         assert_eq!(cfg, decoded);
         assert_eq!(decoded.users.len(), 1);
         assert_eq!(decoded.users[0].role, UserRole::Admin);
+    }
+
+    #[test]
+    fn test_validate_mstp_mac_128_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.mstp_mac = 128;
+        assert!(!cfg.validate(), "mstp_mac=128 should fail validation");
+    }
+
+    #[test]
+    fn test_validate_bad_baud_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.mstp_baud = 115200; // not in the allowed set
+        assert!(!cfg.validate(), "mstp_baud=115200 should fail validation");
+    }
+
+    #[test]
+    fn test_validate_device_id_too_large_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.device_id = DEVICE_ID_MAX + 1;
+        assert!(!cfg.validate(), "device_id > max should fail validation");
+    }
+
+    #[test]
+    fn test_validate_max_master_zero_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.max_master = 0;
+        assert!(!cfg.validate(), "max_master=0 should fail validation");
+    }
+
+    #[test]
+    fn test_validate_empty_hostname_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.hostname = heapless::String::new(); // empty
+        assert!(!cfg.validate(), "empty hostname should fail validation");
+    }
+
+    #[test]
+    fn test_validate_all_good_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.mstp_mac = 1;
+        cfg.bacnet.mstp_baud = 9600;
+        cfg.bacnet.device_id = 100;
+        cfg.bacnet.max_master = 127;
+        // hostname is "bacnet-bridge" by default — non-empty
+        assert!(cfg.validate(), "fully valid config should pass");
+    }
+
+    #[test]
+    fn test_validate_device_id_at_max_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.device_id = DEVICE_ID_MAX;
+        assert!(cfg.validate(), "device_id == DEVICE_ID_MAX should pass");
+    }
+
+    #[test]
+    fn test_validate_max_master_128_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.bacnet.max_master = 128;
+        assert!(!cfg.validate(), "max_master=128 should fail validation");
     }
 
     #[test]

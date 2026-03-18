@@ -9,6 +9,13 @@
 		status = await api.getStatus();
 	});
 
+	async function reboot() {
+		if (!confirm('Reboot device?')) return;
+		try {
+			await fetch('/api/v1/system/reboot', { method: 'POST' });
+		} catch { /* device will go offline */ }
+	}
+
 	function formatUptime(seconds: number): string {
 		const d = Math.floor(seconds / 86400);
 		const h = Math.floor((seconds % 86400) / 3600);
@@ -72,7 +79,7 @@
 		</div>
 
 		<div style="margin-top: var(--vui-space-lg);">
-			<button class="vui-btn vui-btn-danger" onclick={() => { if(confirm('Reboot device?')) alert('Reboot sent'); }}>
+			<button class="vui-btn vui-btn-danger" onclick={reboot}>
 				Reboot Device
 			</button>
 		</div>

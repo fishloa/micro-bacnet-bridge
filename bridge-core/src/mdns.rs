@@ -181,6 +181,12 @@ fn read_name(data: &[u8], start: usize) -> Result<(heapless::String<128>, usize)
                 return Err(DecodeError::UnexpectedEnd);
             }
             let offset = (((len & 0x3F) as usize) << 8) | (data[pos + 1] as usize);
+            // DNS compression pointers MUST point backward (to an earlier byte
+            // in the packet). A forward pointer can cause infinite loops or
+            // allow malformed packets to consume unbounded decode time.
+            if offset >= pos {
+                return Err(DecodeError::InvalidNamePointer);
+            }
             if end_pos.is_none() {
                 end_pos = Some(pos + 2);
             }
@@ -613,6 +619,48 @@ mod tests {
         assert_eq!(TYPE_PTR, 12);
         assert_eq!(TYPE_TXT, 16);
         assert_eq!(TYPE_SRV, 33);
+    }
+
+    #[test]
+    fn test_decode_forward_pointer_rejected() {
+        // Craft an mDNS query packet where the name contains a compression
+        // pointer that points *forward* (to a byte after the pointer itself).
+        // This must be rejected with InvalidNamePointer.
+        //
+        // Layout: 12-byte DNS header + question section
+        // At byte 12 we place a compression pointer 0xC0 0x10 pointing to
+        // byte 16, which is *after* the pointer at byte 12. This is a forward
+        // pointer and must be rejected.
+        let mut buf = [0u8; 32];
+        let mut pos = 0usize;
+        // Header: qd_count=1, everything else zero
+        write_u16(&mut buf, &mut pos, 0); // id
+        write_u16(&mut buf, &mut pos, 0); // flags
+        write_u16(&mut buf, &mut pos, 1); // qd_count = 1
+        write_u16(&mut buf, &mut pos, 0); // an_count
+        write_u16(&mut buf, &mut pos, 0); // ns_count
+        write_u16(&mut buf, &mut pos, 0); // ar_count
+                                          // pos is now 12 — start of question name
+                                          // Place a compression pointer at offset 12 pointing to offset 16
+                                          // (which is 4 bytes *ahead* — a forward pointer).
+        buf[12] = 0xC0; // high 2 bits set = pointer
+        buf[13] = 0x10; // offset = 16 decimal (> 12 = forward pointer)
+                        // At offset 16, place a valid label so the pointer *target* is valid,
+                        // but the direction check should fire before we ever reach it.
+        buf[16] = 0x05; // label length 5
+        buf[17] = b'l';
+        buf[18] = b'o';
+        buf[19] = b'c';
+        buf[20] = b'a';
+        buf[21] = b'l';
+        buf[22] = 0x00; // end of name
+
+        let result = decode_query(&buf[..28]);
+        assert_eq!(
+            result.unwrap_err(),
+            DecodeError::InvalidNamePointer,
+            "forward compression pointer must be rejected"
+        );
     }
 
     #[test]

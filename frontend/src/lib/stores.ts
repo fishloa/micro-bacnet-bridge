@@ -2,6 +2,7 @@ import { writable, derived } from 'svelte/store';
 import type { BacnetPoint } from './api';
 
 export const points = writable<BacnetPoint[]>([]);
+export const deviceId = writable<number>(0);
 export const filterText = writable('');
 export const activeTab = writable<string>('all');
 

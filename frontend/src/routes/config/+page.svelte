@@ -12,26 +12,38 @@
 	let savingNetwork = $state(false);
 	let savingBacnet = $state(false);
 	let savedMsg = $state('');
+	let loaded = $state(false);
 
 	onMount(async () => {
 		net = await api.getNetworkConfig();
 		bacnet = await api.getBacnetConfig();
+		loaded = true;
 	});
 
 	async function saveNetwork() {
 		savingNetwork = true;
-		await api.setNetworkConfig(net);
-		savedMsg = 'Network config saved';
-		savingNetwork = false;
-		setTimeout(() => savedMsg = '', 3000);
+		try {
+			await api.setNetworkConfig(net);
+			savedMsg = 'Network config saved';
+		} catch (e) {
+			savedMsg = 'Failed to save network config';
+		} finally {
+			savingNetwork = false;
+			setTimeout(() => savedMsg = '', 3000);
+		}
 	}
 
 	async function saveBacnet() {
 		savingBacnet = true;
-		await api.setBacnetConfig(bacnet);
-		savedMsg = 'BACnet config saved';
-		savingBacnet = false;
-		setTimeout(() => savedMsg = '', 3000);
+		try {
+			await api.setBacnetConfig(bacnet);
+			savedMsg = 'BACnet config saved';
+		} catch (e) {
+			savedMsg = 'Failed to save BACnet config';
+		} finally {
+			savingBacnet = false;
+			setTimeout(() => savedMsg = '', 3000);
+		}
 	}
 </script>
 
@@ -83,7 +95,7 @@
 				</tbody>
 			</table>
 			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork}>
+				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork || !loaded}>
 					{savingNetwork ? 'Saving...' : 'Save Network'}
 				</button>
 			</div>
@@ -127,7 +139,7 @@
 				</tbody>
 			</table>
 			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet}>
+				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded}>
 					{savingBacnet ? 'Saving...' : 'Save BACnet'}
 				</button>
 			</div>
