@@ -1,4 +1,7 @@
-//! BACnet PDU types: object identifiers, property IDs, values, APDU/service enums.
+//! BACnet protocol types.
+//!
+//! Numeric codes are per ASHRAE 135-2020 and match the bacnet-stack
+//! enumerations in `lib/bacnet-stack/src/bacnet/bacenum.h`.
 
 use heapless::String;
 use serde::{Deserialize, Serialize};
@@ -11,20 +14,34 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u16)]
 pub enum ObjectType {
+    /// ASHRAE object type 0 — OBJECT_ANALOG_INPUT
     AnalogInput = 0,
+    /// ASHRAE object type 1 — OBJECT_ANALOG_OUTPUT
     AnalogOutput = 1,
+    /// ASHRAE object type 2 — OBJECT_ANALOG_VALUE
     AnalogValue = 2,
+    /// ASHRAE object type 3 — OBJECT_BINARY_INPUT
     BinaryInput = 3,
+    /// ASHRAE object type 4 — OBJECT_BINARY_OUTPUT
     BinaryOutput = 4,
+    /// ASHRAE object type 5 — OBJECT_BINARY_VALUE
     BinaryValue = 5,
-    MultiStateInput = 13,
-    MultiStateOutput = 14,
-    MultiStateValue = 19,
-    NotificationClass = 15,
-    TrendLog = 20,
-    Schedule = 17,
+    /// ASHRAE object type 6 — OBJECT_CALENDAR
     Calendar = 6,
+    /// ASHRAE object type 8 — OBJECT_DEVICE
     Device = 8,
+    /// ASHRAE object type 13 — OBJECT_MULTI_STATE_INPUT
+    MultiStateInput = 13,
+    /// ASHRAE object type 14 — OBJECT_MULTI_STATE_OUTPUT
+    MultiStateOutput = 14,
+    /// ASHRAE object type 15 — OBJECT_NOTIFICATION_CLASS
+    NotificationClass = 15,
+    /// ASHRAE object type 17 — OBJECT_SCHEDULE
+    Schedule = 17,
+    /// ASHRAE object type 19 — OBJECT_MULTI_STATE_VALUE
+    MultiStateValue = 19,
+    /// ASHRAE object type 20 — OBJECT_TRENDLOG
+    TrendLog = 20,
 }
 
 impl ObjectType {
@@ -105,24 +122,24 @@ impl ObjectId {
 /// BACnet property identifiers (ASHRAE 135 clause 23.4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PropertyId {
-    /// Present-Value property (85).
-    PresentValue,
-    /// Object-Name property (77).
-    ObjectName,
-    /// Description property (28).
+    /// Description property — ASHRAE property 28 (PROP_DESCRIPTION)
     Description,
-    /// Units property (117).
-    Units,
-    /// Status-Flags property (111).
-    StatusFlags,
-    /// Object-Type property (79).
-    ObjectType,
-    /// Object-Identifier property (75).
-    ObjectIdentifier,
-    /// Out-Of-Service property (81).
-    OutOfService,
-    /// Device-Type property (31).
+    /// Device-Type property — ASHRAE property 31 (PROP_DEVICE_TYPE)
     DeviceType,
+    /// Object-Identifier property — ASHRAE property 75 (PROP_OBJECT_IDENTIFIER)
+    ObjectIdentifier,
+    /// Object-Name property — ASHRAE property 77 (PROP_OBJECT_NAME)
+    ObjectName,
+    /// Object-Type property — ASHRAE property 79 (PROP_OBJECT_TYPE)
+    ObjectType,
+    /// Out-Of-Service property — ASHRAE property 81 (PROP_OUT_OF_SERVICE)
+    OutOfService,
+    /// Present-Value property — ASHRAE property 85 (PROP_PRESENT_VALUE)
+    PresentValue,
+    /// Status-Flags property — ASHRAE property 111 (PROP_STATUS_FLAGS)
+    StatusFlags,
+    /// Units property — ASHRAE property 117 (PROP_UNITS)
+    Units,
     /// An unknown or vendor-specific property identified by its raw code.
     Raw(u32),
 }
@@ -193,26 +210,42 @@ pub enum BacnetValue {
 // ApduType
 // ---------------------------------------------------------------------------
 
-/// BACnet APDU type codes (bits 7–4 of the first APDU byte).
+/// BACnet APDU type codes (BACNET_PDU_TYPE in bacenum.h).
+///
+/// These are the high-nibble values of the first APDU byte (bits 7–4).
+/// `from_byte` masks the input with `0xF0` to extract the type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum ApduType {
+    /// PDU_TYPE_CONFIRMED_SERVICE_REQUEST = 0x00
     ConfirmedRequest = 0x00,
+    /// PDU_TYPE_UNCONFIRMED_SERVICE_REQUEST = 0x10
     UnconfirmedRequest = 0x10,
+    /// PDU_TYPE_SIMPLE_ACK = 0x20
     SimpleAck = 0x20,
+    /// PDU_TYPE_COMPLEX_ACK = 0x30
     ComplexAck = 0x30,
+    /// PDU_TYPE_SEGMENT_ACK = 0x40
+    SegmentAck = 0x40,
+    /// PDU_TYPE_ERROR = 0x50
     Error = 0x50,
+    /// PDU_TYPE_REJECT = 0x60
     Reject = 0x60,
+    /// PDU_TYPE_ABORT = 0x70
     Abort = 0x70,
 }
 
 impl ApduType {
+    /// Parse an APDU type from the first byte of an APDU.
+    ///
+    /// Masks the high nibble (bits 7–4) and matches against the known PDU types.
     pub fn from_byte(b: u8) -> Option<Self> {
         match b & 0xF0 {
             0x00 => Some(Self::ConfirmedRequest),
             0x10 => Some(Self::UnconfirmedRequest),
             0x20 => Some(Self::SimpleAck),
             0x30 => Some(Self::ComplexAck),
+            0x40 => Some(Self::SegmentAck),
             0x50 => Some(Self::Error),
             0x60 => Some(Self::Reject),
             0x70 => Some(Self::Abort),
@@ -232,19 +265,31 @@ impl From<ApduType> for u8 {
 // ---------------------------------------------------------------------------
 
 /// BACnet confirmed and unconfirmed service choice codes.
+///
+/// Confirmed codes match `BACNET_CONFIRMED_SERVICE` in bacenum.h.
+/// Unconfirmed codes match `BACNET_UNCONFIRMED_SERVICE` in bacenum.h.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServiceChoice {
     // Confirmed services
-    ReadProperty,
-    WriteProperty,
-    ReadPropertyMultiple,
+    /// SERVICE_CONFIRMED_SUBSCRIBE_COV = 5
     SubscribeCOV,
+    /// SERVICE_CONFIRMED_READ_PROPERTY = 12
+    ReadProperty,
+    /// SERVICE_CONFIRMED_READ_PROP_MULTIPLE = 14
+    ReadPropertyMultiple,
+    /// SERVICE_CONFIRMED_WRITE_PROPERTY = 15
+    WriteProperty,
     // Unconfirmed services
-    WhoIs,
+    /// SERVICE_UNCONFIRMED_I_AM = 0
     IAm,
-    WhoHas,
+    /// SERVICE_UNCONFIRMED_I_HAVE = 1
     IHave,
+    /// SERVICE_UNCONFIRMED_TIME_SYNCHRONIZATION = 6
     TimeSynchronization,
+    /// SERVICE_UNCONFIRMED_WHO_HAS = 7
+    WhoHas,
+    /// SERVICE_UNCONFIRMED_WHO_IS = 8
+    WhoIs,
 }
 
 impl ServiceChoice {
@@ -263,10 +308,10 @@ impl ServiceChoice {
     pub fn unconfirmed_code(self) -> Option<u8> {
         match self {
             Self::IAm => Some(0),
-            Self::IHave => Some(7),
-            Self::WhoIs => Some(8),
+            Self::IHave => Some(1),
             Self::TimeSynchronization => Some(6),
             Self::WhoHas => Some(7),
+            Self::WhoIs => Some(8),
             _ => None,
         }
     }
@@ -284,8 +329,9 @@ impl ServiceChoice {
     pub fn from_unconfirmed_code(code: u8) -> Option<Self> {
         match code {
             0 => Some(Self::IAm),
+            1 => Some(Self::IHave),
             6 => Some(Self::TimeSynchronization),
-            7 => Some(Self::IHave),
+            7 => Some(Self::WhoHas),
             8 => Some(Self::WhoIs),
             _ => None,
         }
@@ -397,10 +443,10 @@ mod tests {
         );
         assert_eq!(ApduType::from_byte(0x20), Some(ApduType::SimpleAck));
         assert_eq!(ApduType::from_byte(0x30), Some(ApduType::ComplexAck));
+        assert_eq!(ApduType::from_byte(0x40), Some(ApduType::SegmentAck));
         assert_eq!(ApduType::from_byte(0x50), Some(ApduType::Error));
         assert_eq!(ApduType::from_byte(0x60), Some(ApduType::Reject));
         assert_eq!(ApduType::from_byte(0x70), Some(ApduType::Abort));
-        assert_eq!(ApduType::from_byte(0x40), None);
     }
 
     #[test]
@@ -419,7 +465,9 @@ mod tests {
     fn service_choice_unconfirmed_round_trip() {
         let choices = [
             (ServiceChoice::IAm, 0u8),
+            (ServiceChoice::IHave, 1u8),
             (ServiceChoice::TimeSynchronization, 6u8),
+            (ServiceChoice::WhoHas, 7u8),
             (ServiceChoice::WhoIs, 8u8),
         ];
         for (svc, code) in choices {
@@ -427,5 +475,25 @@ mod tests {
             let recovered = ServiceChoice::from_unconfirmed_code(code).unwrap();
             assert_eq!(recovered, svc);
         }
+    }
+
+    #[test]
+    fn ihave_is_not_whohas() {
+        // Regression test: IHave must be code 1, WhoHas must be code 7.
+        // Previously IHave was incorrectly assigned code 7.
+        assert_ne!(
+            ServiceChoice::IHave.unconfirmed_code(),
+            ServiceChoice::WhoHas.unconfirmed_code()
+        );
+        assert_eq!(ServiceChoice::IHave.unconfirmed_code(), Some(1));
+        assert_eq!(ServiceChoice::WhoHas.unconfirmed_code(), Some(7));
+        assert_eq!(
+            ServiceChoice::from_unconfirmed_code(1),
+            Some(ServiceChoice::IHave)
+        );
+        assert_eq!(
+            ServiceChoice::from_unconfirmed_code(7),
+            Some(ServiceChoice::WhoHas)
+        );
     }
 }
