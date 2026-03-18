@@ -43,7 +43,10 @@ fn main() {
     // Linker flags for embedded
     println!("cargo:rustc-link-arg-bins=--nmagic");
     println!("cargo:rustc-link-arg-bins=-Tlink.x");
-    println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
+    // link-rp.x is only emitted by embassy-rp for RP2040; RP2350 doesn't need it.
+    if board_pico {
+        println!("cargo:rustc-link-arg-bins=-Tlink-rp.x");
+    }
     println!("cargo:rustc-link-arg-bins=-Tdefmt.x");
 
     // Compile C sources with arm-none-eabi-gcc
