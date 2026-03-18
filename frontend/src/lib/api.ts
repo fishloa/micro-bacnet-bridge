@@ -99,6 +99,11 @@ export interface PointConfig {
 	// Bridge routing
 	bridgeToBacnetIp: boolean; // forward to BACnet/IP (default true)
 	bridgeToMqtt: boolean;     // publish to MQTT (default true)
+	// Visibility / exposure
+	showOnDashboard: boolean;  // show this point on the dashboard (default true)
+	exposeInApi: boolean;      // expose via REST API (default true)
+	// State text labels for multi-state objects (1-based, index 0 = state 1)
+	stateText: string[];
 }
 
 export const ENGINEERING_UNITS: { code: number; label: string }[] = [
@@ -296,15 +301,26 @@ const MOCK_SNMP_CONFIG: SnmpConfig = {
 };
 
 // Generate default PointConfig for every point in MOCK_POINTS[100]
-const MOCK_POINT_CONFIGS: PointConfig[] = MOCK_POINTS[100].map(p => ({
-	objectType: p.objectType,
-	objectInstance: p.objectInstance,
-	scale: 1.0,
-	offset: 0.0,
-	engineeringUnit: 95,
-	bridgeToBacnetIp: true,
-	bridgeToMqtt: true,
-}));
+const MOCK_POINT_CONFIGS: PointConfig[] = MOCK_POINTS[100].map(p => {
+	const stateText: string[] =
+		p.objectType === 'multi-state-input' && p.objectInstance === 0
+			? ['Off', 'Heat', 'Cool', 'Auto']
+			: p.objectType === 'multi-state-value' && p.objectInstance === 0
+			? ['Manual', 'Auto', 'Override']
+			: [];
+	return {
+		objectType: p.objectType,
+		objectInstance: p.objectInstance,
+		scale: 1.0,
+		offset: 0.0,
+		engineeringUnit: 95,
+		bridgeToBacnetIp: true,
+		bridgeToMqtt: true,
+		showOnDashboard: true,
+		exposeInApi: true,
+		stateText,
+	};
+});
 
 // --- API functions ---
 

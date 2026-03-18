@@ -284,6 +284,52 @@ impl Default for BridgeConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// PointConfig
+// ---------------------------------------------------------------------------
+
+/// Per-point display and routing configuration, stored separately from `BridgeConfig`.
+///
+/// Each entry corresponds to one BACnet object on a discovered device. The
+/// `scale` and `offset` fields allow raw BACnet values to be converted to
+/// engineering units before publishing to MQTT or the UI. `state_text` maps
+/// 1-based multi-state integers to human-readable labels (index 0 = state 1).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PointConfig {
+    /// BACnet object type code (matches `ObjectType::code()`).
+    pub object_type: u16,
+    /// BACnet object instance number.
+    pub object_instance: u32,
+    /// Multiplicative scale applied to raw numeric values (default 1.0).
+    pub scale: f32,
+    /// Additive offset applied after scale: `display = raw * scale + offset` (default 0.0).
+    pub offset: f32,
+    /// BACnet engineering unit code (ASHRAE 135 enumeration). 95 = no units.
+    pub engineering_unit: u16,
+    /// When true, forward this point's value changes to BACnet/IP subscribers.
+    pub bridge_to_bacnet_ip: bool,
+    /// When true, publish this point's value to the MQTT broker.
+    pub bridge_to_mqtt: bool,
+    /// State text for multi-state objects. Index 0 maps to state 1 (BACnet is 1-based).
+    /// Up to 16 states, each label up to 16 characters.
+    pub state_text: Vec<String<16>, 16>,
+}
+
+impl Default for PointConfig {
+    fn default() -> Self {
+        Self {
+            object_type: 0,
+            object_instance: 0,
+            scale: 1.0,
+            offset: 0.0,
+            engineering_unit: 95,
+            bridge_to_bacnet_ip: true,
+            bridge_to_mqtt: true,
+            state_text: Vec::new(),
+        }
+    }
+}
+
 /// Valid MS/TP baud rates (per BACnet clause 9.3).
 const VALID_BAUD_RATES: [u32; 4] = [9600, 19200, 38400, 76800];
 

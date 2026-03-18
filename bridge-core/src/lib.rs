@@ -34,7 +34,9 @@ pub mod syslog;
 pub use bacnet::{
     ApduType, BacnetValue, EngineeringUnits, ObjectId, ObjectType, PropertyId, ServiceChoice,
 };
-pub use config::{BacnetDeviceConfig, BridgeConfig, NetworkConfig, UserConfig, UserRole};
+pub use config::{
+    BacnetDeviceConfig, BridgeConfig, NetworkConfig, PointConfig, UserConfig, UserRole,
+};
 pub use error::{BridgeError, DecodeError, EncodeError};
 pub use ipc::{BacnetPdu, RingBuffer};
 pub use mdns::{

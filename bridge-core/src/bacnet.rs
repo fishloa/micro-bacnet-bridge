@@ -903,6 +903,124 @@ impl From<EngineeringUnits> for u32 {
 }
 
 // ---------------------------------------------------------------------------
+// Value conversion helpers (BACnet ↔ display/MQTT)
+// ---------------------------------------------------------------------------
+
+use crate::config::PointConfig;
+
+/// Convert a raw BACnet value to a display/MQTT value using point configuration.
+///
+/// Applies scale+offset for numeric types, state text lookup for multi-state
+/// objects, and pass-through for booleans and strings.
+///
+/// - `Real(f)` → `Real(f * scale + offset)`
+/// - `SignedInt(n)` → `Real(n as f32 * scale + offset)`
+/// - `UnsignedInt(n)` or `Enumerated(n)` with non-empty `state_text` and
+///   `n >= 1`: look up `state_text[n-1]`; if found return `CharString(text)`;
+///   otherwise apply numeric scaling.
+/// - `Boolean` → pass-through.
+/// - All other variants → pass-through.
+pub fn convert_from_bacnet(value: &BacnetValue, config: &PointConfig) -> BacnetValue {
+    let scale = config.scale;
+    let offset = config.offset;
+
+    match value {
+        BacnetValue::Real(f) => BacnetValue::Real(f * scale + offset),
+
+        BacnetValue::SignedInt(n) => BacnetValue::Real(*n as f32 * scale + offset),
+
+        BacnetValue::UnsignedInt(n) => {
+            if !config.state_text.is_empty() && *n >= 1 {
+                let idx = (*n as usize) - 1;
+                if let Some(label) = config.state_text.get(idx) {
+                    let mut s = String::<64>::new();
+                    // label is a heapless::String<16>; copy chars into String<64>
+                    for ch in label.chars() {
+                        // push() fails only when full; labels are ≤16 chars, target is 64
+                        let _ = s.push(ch);
+                    }
+                    return BacnetValue::CharString(s);
+                }
+            }
+            // No text mapping — apply numeric scaling
+            BacnetValue::Real(*n as f32 * scale + offset)
+        }
+
+        BacnetValue::Enumerated(n) => {
+            if !config.state_text.is_empty() && *n >= 1 {
+                let idx = (*n as usize) - 1;
+                if let Some(label) = config.state_text.get(idx) {
+                    let mut s = String::<64>::new();
+                    for ch in label.chars() {
+                        let _ = s.push(ch);
+                    }
+                    return BacnetValue::CharString(s);
+                }
+            }
+            // No text mapping — apply numeric scaling
+            BacnetValue::Real(*n as f32 * scale + offset)
+        }
+
+        // Pass-through
+        BacnetValue::Boolean(_)
+        | BacnetValue::CharString(_)
+        | BacnetValue::Null
+        | BacnetValue::ObjectIdentifier(_) => value.clone(),
+    }
+}
+
+/// Convert a user/MQTT string value back to a raw BACnet value.
+///
+/// Resolution order:
+/// 1. If `state_text` is non-empty, check whether `display_value` matches
+///    any label (case-sensitive). If found, return `Enumerated(index + 1)`.
+/// 2. Try to parse as a number. Reverse scale/offset: `raw = (parsed - offset) / scale`.
+///    Returns `Real(raw)`.
+/// 3. If the string is one of "true", "Active", "ON", "1" → `Boolean(true)`.
+///    If it is "false", "Inactive", "OFF", "0" → `Boolean(false)`.
+/// 4. Otherwise return `None`.
+pub fn convert_to_bacnet(display_value: &str, config: &PointConfig) -> Option<BacnetValue> {
+    // 1. State text lookup (case-sensitive) — checked first so named states win.
+    if !config.state_text.is_empty() {
+        for (idx, label) in config.state_text.iter().enumerate() {
+            if label.as_str() == display_value {
+                return Some(BacnetValue::Enumerated(idx as u32 + 1));
+            }
+        }
+    }
+
+    // 2. Boolean strings — checked before numeric so "true"/"false" and "1"/"0"
+    //    are treated as boolean when there is no state-text to consume them.
+    match display_value {
+        "true" | "Active" | "ON" => return Some(BacnetValue::Boolean(true)),
+        "false" | "Inactive" | "OFF" => return Some(BacnetValue::Boolean(false)),
+        _ => {}
+    }
+
+    // 3. Numeric: reverse scale/offset.  "1" and "0" also fall through here.
+    if let Ok(parsed) = display_value.parse::<f32>() {
+        // Special case: integer "1" → Boolean(true), "0" → Boolean(false).
+        // This matches the common MQTT convention while still allowing higher
+        // numeric writes (e.g. "42") to flow through as Real values.
+        if display_value == "1" {
+            return Some(BacnetValue::Boolean(true));
+        }
+        if display_value == "0" {
+            return Some(BacnetValue::Boolean(false));
+        }
+        let scale = config.scale;
+        let raw = if scale == 0.0 {
+            parsed
+        } else {
+            (parsed - config.offset) / scale
+        };
+        return Some(BacnetValue::Real(raw));
+    }
+
+    None
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -1489,5 +1607,432 @@ mod tests {
             assert_eq!(from_code.code(), code);
             assert_eq!(from_code.ha_unit_str(), expected_str);
         }
+    }
+
+    // =====================================================================
+    // convert_from_bacnet / convert_to_bacnet tests
+    // =====================================================================
+
+    use crate::config::PointConfig;
+    use heapless::Vec as HVec;
+
+    /// Build a PointConfig with given scale/offset and no state text.
+    fn numeric_cfg(scale: f32, offset: f32) -> PointConfig {
+        PointConfig {
+            scale,
+            offset,
+            ..PointConfig::default()
+        }
+    }
+
+    /// Build a PointConfig whose state_text is populated with the given labels.
+    fn state_cfg(labels: &[&str]) -> PointConfig {
+        let mut state_text: HVec<heapless::String<16>, 16> = HVec::new();
+        for &label in labels {
+            let mut s = heapless::String::<16>::new();
+            let _ = s.push_str(label);
+            let _ = state_text.push(s);
+        }
+        PointConfig {
+            state_text,
+            ..PointConfig::default()
+        }
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_real_with_scale() {
+        let cfg = numeric_cfg(2.0, 10.0);
+        let result = convert_from_bacnet(&BacnetValue::Real(5.0), &cfg);
+        assert_eq!(result, BacnetValue::Real(20.0)); // 5*2+10
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_real_identity() {
+        let cfg = numeric_cfg(1.0, 0.0);
+        let result = convert_from_bacnet(&BacnetValue::Real(42.5), &cfg);
+        assert_eq!(result, BacnetValue::Real(42.5));
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_enumerated_with_text() {
+        let cfg = state_cfg(&["Off", "Heat", "Cool", "Auto"]);
+        // State 2 → "Heat" (index 1)
+        let result = convert_from_bacnet(&BacnetValue::Enumerated(2), &cfg);
+        let mut expected = heapless::String::<64>::new();
+        let _ = expected.push_str("Heat");
+        assert_eq!(result, BacnetValue::CharString(expected));
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_enumerated_without_text() {
+        // No state_text → numeric scaling applies
+        let cfg = numeric_cfg(1.0, 0.0);
+        let result = convert_from_bacnet(&BacnetValue::Enumerated(3), &cfg);
+        assert_eq!(result, BacnetValue::Real(3.0));
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_enumerated_out_of_range() {
+        // State 5 with only 4 labels → fall back to numeric
+        let cfg = state_cfg(&["Off", "Heat", "Cool", "Auto"]);
+        let result = convert_from_bacnet(&BacnetValue::Enumerated(5), &cfg);
+        // Scale 1, offset 0 → Real(5.0)
+        assert_eq!(result, BacnetValue::Real(5.0));
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_boolean_passthrough() {
+        let cfg = numeric_cfg(10.0, 5.0);
+        assert_eq!(
+            convert_from_bacnet(&BacnetValue::Boolean(true), &cfg),
+            BacnetValue::Boolean(true)
+        );
+        assert_eq!(
+            convert_from_bacnet(&BacnetValue::Boolean(false), &cfg),
+            BacnetValue::Boolean(false)
+        );
+    }
+
+    #[test]
+    fn test_convert_from_bacnet_unsigned_with_state_text() {
+        let cfg = state_cfg(&["Manual", "Auto", "Override"]);
+        // State 2 → "Auto"
+        let result = convert_from_bacnet(&BacnetValue::UnsignedInt(2), &cfg);
+        let mut expected = heapless::String::<64>::new();
+        let _ = expected.push_str("Auto");
+        assert_eq!(result, BacnetValue::CharString(expected));
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_text_to_state() {
+        let cfg = state_cfg(&["Off", "Heat", "Cool", "Auto"]);
+        // "Cool" is index 2, state 3
+        let result = convert_to_bacnet("Cool", &cfg);
+        assert_eq!(result, Some(BacnetValue::Enumerated(3)));
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_number_reverse_scale() {
+        // display = raw*2+10  →  raw = (display-10)/2
+        let cfg = numeric_cfg(2.0, 10.0);
+        // display 20 → raw (20-10)/2 = 5
+        let result = convert_to_bacnet("20", &cfg);
+        match result {
+            Some(BacnetValue::Real(v)) => assert!((v - 5.0).abs() < 1e-4, "expected 5.0 got {}", v),
+            other => panic!("expected Real(5.0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_boolean_strings() {
+        let cfg = numeric_cfg(1.0, 0.0);
+        assert_eq!(
+            convert_to_bacnet("true", &cfg),
+            Some(BacnetValue::Boolean(true))
+        );
+        assert_eq!(
+            convert_to_bacnet("Active", &cfg),
+            Some(BacnetValue::Boolean(true))
+        );
+        assert_eq!(
+            convert_to_bacnet("ON", &cfg),
+            Some(BacnetValue::Boolean(true))
+        );
+        assert_eq!(
+            convert_to_bacnet("1", &cfg),
+            Some(BacnetValue::Boolean(true))
+        );
+        assert_eq!(
+            convert_to_bacnet("false", &cfg),
+            Some(BacnetValue::Boolean(false))
+        );
+        assert_eq!(
+            convert_to_bacnet("Inactive", &cfg),
+            Some(BacnetValue::Boolean(false))
+        );
+        assert_eq!(
+            convert_to_bacnet("OFF", &cfg),
+            Some(BacnetValue::Boolean(false))
+        );
+        assert_eq!(
+            convert_to_bacnet("0", &cfg),
+            Some(BacnetValue::Boolean(false))
+        );
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_invalid_returns_none() {
+        let cfg = numeric_cfg(1.0, 0.0);
+        assert_eq!(convert_to_bacnet("not-a-value", &cfg), None);
+        assert_eq!(convert_to_bacnet("banana", &cfg), None);
+    }
+
+    #[test]
+    fn test_roundtrip_numeric() {
+        // raw = 7.5, scale = 0.5, offset = -5  → display = 7.5*0.5 + (-5) = -1.25
+        // reverse: raw = (-1.25 - (-5)) / 0.5 = 3.75/0.5 = 7.5 ✓
+        let cfg = numeric_cfg(0.5, -5.0);
+        let original = BacnetValue::Real(7.5);
+        let display = convert_from_bacnet(&original, &cfg);
+        // Verify the forward conversion: 7.5 * 0.5 + (-5.0) = -1.25
+        assert_eq!(display, BacnetValue::Real(-1.25_f32));
+        // Now reverse using the known display string "-1.25"
+        let back = convert_to_bacnet("-1.25", &cfg);
+        match back {
+            Some(BacnetValue::Real(v)) => {
+                assert!((v - 7.5).abs() < 1e-4, "roundtrip failed: got {}", v)
+            }
+            other => panic!("expected Real(7.5), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_state_text() {
+        // "Heat" is state 2 in ["Off", "Heat", "Cool", "Auto"]
+        let cfg = state_cfg(&["Off", "Heat", "Cool", "Auto"]);
+        // Convert state 2 → display "Heat"
+        let from = convert_from_bacnet(&BacnetValue::Enumerated(2), &cfg);
+        let mut expected_str = heapless::String::<64>::new();
+        let _ = expected_str.push_str("Heat");
+        assert_eq!(from, BacnetValue::CharString(expected_str));
+        // Convert "Heat" back → Enumerated(2)
+        let back = convert_to_bacnet("Heat", &cfg);
+        assert_eq!(back, Some(BacnetValue::Enumerated(2)));
+    }
+
+    // =====================================================================
+    // Additional edge-case tests: convert_from_bacnet
+    // =====================================================================
+
+    #[test]
+    fn test_convert_from_signed_int_with_scale() {
+        // SignedInt(-10) scale=2 offset=5 → Real(-10 * 2 + 5) = Real(-15.0)
+        let cfg = numeric_cfg(2.0, 5.0);
+        let result = convert_from_bacnet(&BacnetValue::SignedInt(-10), &cfg);
+        assert_eq!(result, BacnetValue::Real(-15.0));
+    }
+
+    #[test]
+    fn test_convert_from_unsigned_zero_state() {
+        // UnsignedInt(0) with state_text: 0 is below the 1-based range so
+        // the state-text path is skipped and numeric scaling applies.
+        let cfg = state_cfg(&["Off", "Heat", "Cool"]);
+        // scale=1, offset=0 (state_cfg default) → Real(0.0)
+        let result = convert_from_bacnet(&BacnetValue::UnsignedInt(0), &cfg);
+        assert_eq!(result, BacnetValue::Real(0.0));
+    }
+
+    #[test]
+    fn test_convert_from_null_passthrough() {
+        let cfg = numeric_cfg(2.0, 100.0);
+        let result = convert_from_bacnet(&BacnetValue::Null, &cfg);
+        assert_eq!(result, BacnetValue::Null);
+    }
+
+    #[test]
+    fn test_convert_from_charstring_passthrough() {
+        // CharString is passed through unchanged even when scale/offset are set.
+        let cfg = numeric_cfg(3.0, 7.0);
+        let mut s = heapless::String::<64>::new();
+        let _ = s.push_str("hello");
+        let result = convert_from_bacnet(&BacnetValue::CharString(s.clone()), &cfg);
+        assert_eq!(result, BacnetValue::CharString(s));
+    }
+
+    #[test]
+    fn test_convert_from_real_negative_offset() {
+        // Real(100) scale=1 offset=-32 → Real(100*1 + (-32)) = Real(68)
+        let cfg = numeric_cfg(1.0, -32.0);
+        let result = convert_from_bacnet(&BacnetValue::Real(100.0), &cfg);
+        assert_eq!(result, BacnetValue::Real(68.0));
+    }
+
+    #[test]
+    fn test_convert_from_real_zero_scale() {
+        // Real(50) scale=0 offset=10 → Real(50*0 + 10) = Real(10)
+        let cfg = numeric_cfg(0.0, 10.0);
+        let result = convert_from_bacnet(&BacnetValue::Real(50.0), &cfg);
+        assert_eq!(result, BacnetValue::Real(10.0));
+    }
+
+    // =====================================================================
+    // Additional edge-case tests: convert_to_bacnet
+    // =====================================================================
+
+    #[test]
+    fn test_convert_to_bacnet_case_sensitive() {
+        // "heat" (lowercase) must NOT match the label "Heat" (title-case).
+        let cfg = state_cfg(&["Off", "Heat", "Cool", "Auto"]);
+        // State lookup fails, then "heat" doesn't parse as a number or boolean
+        // keyword, so the result is None.
+        assert_eq!(convert_to_bacnet("heat", &cfg), None);
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_negative_number() {
+        // display="-25.5" with scale=0.5, offset=5
+        // raw = (-25.5 - 5) / 0.5 = -30.5 / 0.5 = -61.0
+        let cfg = numeric_cfg(0.5, 5.0);
+        match convert_to_bacnet("-25.5", &cfg) {
+            Some(BacnetValue::Real(v)) => {
+                assert!((v - (-61.0_f32)).abs() < 1e-3, "expected -61.0, got {}", v)
+            }
+            other => panic!("expected Real(-61.0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_zero_scale() {
+        // scale=0 must not cause a division-by-zero; the implementation
+        // returns the parsed value unchanged when scale==0.
+        let cfg = numeric_cfg(0.0, 10.0);
+        match convert_to_bacnet("42", &cfg) {
+            // "42" parses as a number; not "1" or "0" → Real(42.0) unchanged
+            Some(BacnetValue::Real(v)) => {
+                assert!((v - 42.0_f32).abs() < 1e-4, "expected 42.0, got {}", v)
+            }
+            other => panic!("expected Real(42.0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_empty_string() {
+        // An empty string cannot match any label, boolean keyword, or number.
+        let cfg = numeric_cfg(1.0, 0.0);
+        assert_eq!(convert_to_bacnet("", &cfg), None);
+    }
+
+    #[test]
+    fn test_convert_to_bacnet_state_priority() {
+        // state_text contains "42" as a label. The label lookup runs first
+        // (before the numeric parser), so "42" should match state 2, NOT
+        // parse as a number.
+        let cfg = state_cfg(&["10", "42", "99"]);
+        // "42" is index 1 → Enumerated(2)
+        assert_eq!(
+            convert_to_bacnet("42", &cfg),
+            Some(BacnetValue::Enumerated(2))
+        );
+    }
+
+    // =====================================================================
+    // Roundtrip tests
+    // =====================================================================
+
+    #[test]
+    fn test_roundtrip_boolean() {
+        // true → display "Active" (via the UI/HTTP layer which uses "Active"/"Inactive");
+        // convert_to_bacnet("Active", ...) → Boolean(true).
+        let cfg = numeric_cfg(1.0, 0.0);
+        // Forward: Boolean passes through unchanged.
+        let display = convert_from_bacnet(&BacnetValue::Boolean(true), &cfg);
+        assert_eq!(display, BacnetValue::Boolean(true));
+        // Reverse: user types "Active" → Boolean(true).
+        let back = convert_to_bacnet("Active", &cfg);
+        assert_eq!(back, Some(BacnetValue::Boolean(true)));
+    }
+
+    #[test]
+    fn test_roundtrip_negative_scale() {
+        // scale=-1 offset=100: display = raw * -1 + 100
+        // raw=30 → display=70;  reverse: raw = (70 - 100) / -1 = 30 ✓
+        let cfg = numeric_cfg(-1.0, 100.0);
+        let display = convert_from_bacnet(&BacnetValue::Real(30.0), &cfg);
+        assert_eq!(display, BacnetValue::Real(70.0));
+        match convert_to_bacnet("70", &cfg) {
+            Some(BacnetValue::Real(v)) => {
+                assert!((v - 30.0_f32).abs() < 1e-4, "expected 30.0, got {}", v)
+            }
+            other => panic!("expected Real(30.0), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_all_states() {
+        let labels = ["Off", "Heat", "Cool", "Auto"];
+        let cfg = state_cfg(&labels);
+        for (i, &label) in labels.iter().enumerate() {
+            let state = (i + 1) as u32; // BACnet is 1-based
+                                        // Forward: Enumerated(state) → CharString(label)
+            let display = convert_from_bacnet(&BacnetValue::Enumerated(state), &cfg);
+            let mut expected = heapless::String::<64>::new();
+            let _ = expected.push_str(label);
+            assert_eq!(
+                display,
+                BacnetValue::CharString(expected),
+                "forward failed for state {}",
+                state
+            );
+            // Reverse: label → Enumerated(state)
+            let back = convert_to_bacnet(label, &cfg);
+            assert_eq!(
+                back,
+                Some(BacnetValue::Enumerated(state)),
+                "reverse failed for label {}",
+                label
+            );
+        }
+    }
+
+    // =====================================================================
+    // PointConfig tests
+    // =====================================================================
+
+    #[test]
+    fn test_point_config_default() {
+        let cfg = PointConfig::default();
+        assert_eq!(cfg.object_type, 0);
+        assert_eq!(cfg.object_instance, 0);
+        assert!(
+            (cfg.scale - 1.0).abs() < f32::EPSILON,
+            "default scale should be 1.0"
+        );
+        assert!(
+            (cfg.offset - 0.0).abs() < f32::EPSILON,
+            "default offset should be 0.0"
+        );
+        assert_eq!(cfg.engineering_unit, 95);
+        assert!(
+            cfg.bridge_to_bacnet_ip,
+            "bridge_to_bacnet_ip default should be true"
+        );
+        assert!(cfg.bridge_to_mqtt, "bridge_to_mqtt default should be true");
+        assert!(
+            cfg.state_text.is_empty(),
+            "state_text default should be empty"
+        );
+    }
+
+    #[test]
+    fn test_point_config_serde_roundtrip() {
+        // Build a config with state_text populated.
+        let cfg = PointConfig {
+            object_type: 13, // MultiStateInput
+            object_instance: 5,
+            scale: 1.0,
+            offset: 0.0,
+            engineering_unit: 95,
+            bridge_to_bacnet_ip: true,
+            bridge_to_mqtt: false,
+            state_text: {
+                let mut v: heapless::Vec<heapless::String<16>, 16> = heapless::Vec::new();
+                for label in &["Off", "Heat", "Cool", "Auto"] {
+                    let mut s = heapless::String::<16>::new();
+                    let _ = s.push_str(label);
+                    let _ = v.push(s);
+                }
+                v
+            },
+        };
+        let mut buf = [0u8; 512];
+        let len = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
+        let (recovered, _): (PointConfig, _) =
+            serde_json_core::from_slice(&buf[..len]).expect("deserialize failed");
+        assert_eq!(recovered.object_type, 13);
+        assert_eq!(recovered.object_instance, 5);
+        assert!(!recovered.bridge_to_mqtt);
+        assert_eq!(recovered.state_text.len(), 4);
+        assert_eq!(recovered.state_text[0].as_str(), "Off");
+        assert_eq!(recovered.state_text[3].as_str(), "Auto");
     }
 }

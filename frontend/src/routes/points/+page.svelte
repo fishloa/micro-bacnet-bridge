@@ -19,6 +19,11 @@
 	let saveStatus: 'idle' | 'saving' | 'success' | 'error' = $state('idle');
 	let saveMessage: string = $state('');
 
+	// --- Pagination ---
+	const PAGE_SIZE_OPTIONS = [25, 50, 100, 0]; // 0 = All
+	let pageSize: number = $state(50);
+	let currentPage: number = $state(1);
+
 	// --- Derived: merged rows ---
 	type Row = {
 		point: BacnetPoint;
@@ -53,6 +58,28 @@
 		return rows;
 	});
 
+	let totalPages: number = $derived(
+		pageSize === 0 ? 1 : Math.max(1, Math.ceil(filteredRows.length / pageSize))
+	);
+
+	let pagedRows: Row[] = $derived.by(() => {
+		if (pageSize === 0) return filteredRows;
+		const start = (currentPage - 1) * pageSize;
+		return filteredRows.slice(start, start + pageSize);
+	});
+
+	// Reset to page 1 when filter changes
+	$effect(() => {
+		// access filterText to establish the reactive dependency
+		filterText;
+		currentPage = 1;
+	});
+
+	// Clamp current page when total pages shrink
+	$effect(() => {
+		if (currentPage > totalPages) currentPage = totalPages;
+	});
+
 	function defaultConfig(p: BacnetPoint): PointConfig {
 		return {
 			objectType: p.objectType,
@@ -62,6 +89,9 @@
 			engineeringUnit: 95,
 			bridgeToBacnetIp: true,
 			bridgeToMqtt: true,
+			showOnDashboard: true,
+			exposeInApi: true,
+			stateText: [],
 		};
 	}
 
@@ -71,8 +101,6 @@
 		try {
 			const devList = await api.getDevices();
 			devices = devList;
-			// Load points from first online device for the config page
-			// (config page shows ALL points across ALL devices — or just device 100 for now)
 			const targetDevice = devList.find(d => d.online && d.id === 100) ?? devList.find(d => d.online);
 			if (targetDevice) {
 				allPoints = await api.getPoints(targetDevice.id);
@@ -89,6 +117,12 @@
 	});
 
 	// --- Helpers ---
+	const MULTI_STATE_TYPES = new Set(['multi-state-input', 'multi-state-output', 'multi-state-value']);
+
+	function isMultiState(objectType: string): boolean {
+		return MULTI_STATE_TYPES.has(objectType);
+	}
+
 	function badgeClass(objectType: string): string {
 		const info = OBJECT_TYPE_INFO[objectType];
 		if (!info) return 'vui-badge';
@@ -103,13 +137,31 @@
 		return ENGINEERING_UNITS.find(u => u.code === code)?.label ?? String(code);
 	}
 
-	function convertedValue(p: BacnetPoint, cfg: PointConfig): string {
-		if (!isNumericType(p.objectType)) {
-			if (typeof p.presentValue === 'boolean') return p.presentValue ? 'Active' : 'Inactive';
-			return String(p.presentValue);
-		}
+	/** Raw BACnet value as a string for display. */
+	function rawValue(p: BacnetPoint): string {
+		if (typeof p.presentValue === 'boolean') return p.presentValue ? 'Active' : 'Inactive';
+		return String(p.presentValue);
+	}
+
+	/** Resolved multi-state label, or null if not applicable. */
+	function resolvedStateLabel(p: BacnetPoint, cfg: PointConfig): string | null {
+		if (!isMultiState(p.objectType)) return null;
+		if (!cfg.stateText || cfg.stateText.length === 0) return null;
+		const stateNum = typeof p.presentValue === 'number'
+			? p.presentValue
+			: parseFloat(String(p.presentValue));
+		if (isNaN(stateNum) || stateNum < 1) return null;
+		const label = cfg.stateText[Math.round(stateNum) - 1];
+		return label ?? null;
+	}
+
+	/** Computed (scaled) value for numeric non-multistate points when scale/offset is applied. */
+	function computedValue(p: BacnetPoint, cfg: PointConfig): string | null {
+		if (!isNumericType(p.objectType)) return null;
+		if (isMultiState(p.objectType)) return null;
+		if (cfg.scale === 1 && cfg.offset === 0) return null;
 		const raw = typeof p.presentValue === 'number' ? p.presentValue : parseFloat(String(p.presentValue));
-		if (isNaN(raw)) return String(p.presentValue);
+		if (isNaN(raw)) return null;
 		const converted = raw * cfg.scale + cfg.offset;
 		const label = unitLabel(cfg.engineeringUnit);
 		if (label === 'No Units') return converted.toFixed(3).replace(/\.?0+$/, '') || '0';
@@ -117,11 +169,6 @@
 	}
 
 	// --- Mutation helpers ---
-	function getOrDefault(p: BacnetPoint): PointConfig {
-		const key = pointKey(p);
-		return configs.get(key) ?? defaultConfig(p);
-	}
-
 	function updateConfig(p: BacnetPoint, patch: Partial<PointConfig>) {
 		const key = pointKey(p);
 		const existing = configs.get(key) ?? defaultConfig(p);
@@ -157,6 +204,20 @@
 		updateConfig(p, { bridgeToMqtt: (e.target as HTMLInputElement).checked });
 	}
 
+	function onDashChange(p: BacnetPoint, e: Event) {
+		updateConfig(p, { showOnDashboard: (e.target as HTMLInputElement).checked });
+	}
+
+	function onApiChange(p: BacnetPoint, e: Event) {
+		updateConfig(p, { exposeInApi: (e.target as HTMLInputElement).checked });
+	}
+
+	function onStateTextInput(p: BacnetPoint, e: Event) {
+		const raw = (e.target as HTMLInputElement).value;
+		const labels = raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+		updateConfig(p, { stateText: labels });
+	}
+
 	// --- Save ---
 	async function saveAll() {
 		if (dirty.size === 0) return;
@@ -168,7 +229,6 @@
 				const cfg = configs.get(key);
 				if (cfg) dirtyConfigs.push(cfg);
 			}
-			// Save each dirty config individually
 			for (const cfg of dirtyConfigs) {
 				await api.setPointConfig(cfg.objectType, cfg.objectInstance, cfg);
 			}
@@ -230,18 +290,24 @@
 					<tr>
 						<th style="width: 52px">Type</th>
 						<th>Name</th>
-						<th style="width: 160px">Value</th>
+						<th style="width: 120px">BACnet Value</th>
 						<th style="width: 80px">Scale</th>
 						<th style="width: 80px">Offset</th>
-						<th style="width: 110px">Unit</th>
-						<th style="width: 70px; text-align: center">BACnet/IP</th>
-						<th style="width: 55px; text-align: center">MQTT</th>
+						<th style="width: 140px">Mapped Value</th>
+						<th style="width: 100px">Unit</th>
+						<th style="width: 45px; text-align: center">Dash</th>
+						<th style="width: 45px; text-align: center">B/IP</th>
+						<th style="width: 45px; text-align: center">MQTT</th>
+						<th style="width: 45px; text-align: center">API</th>
 					</tr>
 				</thead>
 				<tbody>
-					{#each filteredRows as row (row.key)}
+					{#each pagedRows as row (row.key)}
 						{@const numeric = isNumericType(row.point.objectType)}
+						{@const multiState = isMultiState(row.point.objectType)}
 						{@const isDirty = dirty.has(row.key)}
+						{@const stateLabel = resolvedStateLabel(row.point, row.config)}
+						{@const mapped = computedValue(row.point, row.config)}
 						<tr class:row-dirty={isDirty}>
 							<td>
 								<span class={badgeClass(row.point.objectType)}>{badgeLabel(row.point.objectType)}</span>
@@ -252,17 +318,36 @@
 									<span class="point-desc text-sub text-xs">{row.point.description}</span>
 								{/if}
 							</td>
+							<!-- BACnet Value (raw) -->
 							<td class="cell-value mono">
-								{#if numeric && (row.config.scale !== 1 || row.config.offset !== 0)}
-									<span class="raw-value text-muted">{row.point.presentValue}</span>
-									<span class="converted-arrow text-muted">&rarr;</span>
-									<span class="computed-value">{convertedValue(row.point, row.config)}</span>
-								{:else}
-									{convertedValue(row.point, row.config)}
+								<span class="raw-value">{rawValue(row.point)}</span>
+								{#if multiState && row.config.stateText && row.config.stateText.length > 0}
+									<div class="state-text-input-wrap">
+										<input
+											class="vui-input compact-state-text"
+											type="text"
+											placeholder="Off,Heat,Cool,…"
+											value={row.config.stateText.join(', ')}
+											oninput={(e) => onStateTextInput(row.point, e)}
+											title="Comma-separated state labels (1-based)"
+										/>
+									</div>
+								{:else if multiState}
+									<div class="state-text-input-wrap">
+										<input
+											class="vui-input compact-state-text"
+											type="text"
+											placeholder="Off,Heat,Cool,…"
+											value=""
+											oninput={(e) => onStateTextInput(row.point, e)}
+											title="Comma-separated state labels (1-based)"
+										/>
+									</div>
 								{/if}
 							</td>
+							<!-- Scale -->
 							<td class="cell-input">
-								{#if numeric}
+								{#if numeric && !multiState}
 									<input
 										class="vui-input compact-num"
 										type="number"
@@ -274,8 +359,9 @@
 									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
+							<!-- Offset -->
 							<td class="cell-input">
-								{#if numeric}
+								{#if numeric && !multiState}
 									<input
 										class="vui-input compact-num"
 										type="number"
@@ -287,8 +373,19 @@
 									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
+							<!-- Mapped Value -->
+							<td class="cell-mapped mono">
+								{#if multiState && stateLabel !== null}
+									<span class="computed-value">{stateLabel}</span>
+								{:else if !multiState && mapped !== null}
+									<span class="computed-value">{mapped}</span>
+								{:else}
+									<span class="text-sub text-sm">—</span>
+								{/if}
+							</td>
+							<!-- Unit -->
 							<td class="cell-input">
-								{#if numeric}
+								{#if numeric && !multiState}
 									<select
 										class="vui-input compact-select"
 										value={row.config.engineeringUnit}
@@ -302,7 +399,17 @@
 									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
-							<td style="text-align: center">
+							<!-- Dash -->
+							<td class="col-check">
+								<input
+									type="checkbox"
+									class="vui-checkbox"
+									checked={row.config.showOnDashboard}
+									onchange={(e) => onDashChange(row.point, e)}
+								/>
+							</td>
+							<!-- B/IP -->
+							<td class="col-check">
 								<input
 									type="checkbox"
 									class="vui-checkbox"
@@ -310,7 +417,8 @@
 									onchange={(e) => onBacnetIpChange(row.point, e)}
 								/>
 							</td>
-							<td style="text-align: center">
+							<!-- MQTT -->
+							<td class="col-check">
 								<input
 									type="checkbox"
 									class="vui-checkbox"
@@ -318,10 +426,67 @@
 									onchange={(e) => onMqttChange(row.point, e)}
 								/>
 							</td>
+							<!-- API -->
+							<td class="col-check">
+								<input
+									type="checkbox"
+									class="vui-checkbox"
+									checked={row.config.exposeInApi}
+									onchange={(e) => onApiChange(row.point, e)}
+								/>
+							</td>
 						</tr>
 					{/each}
 				</tbody>
 			</table>
+		</div>
+
+		<!-- Pagination -->
+		<div class="pagination-bar">
+			<div class="pagination-left">
+				<label class="text-sm text-sub" for="page-size-select">Rows:</label>
+				<select
+					id="page-size-select"
+					class="vui-input page-size-select"
+					value={pageSize}
+					onchange={(e) => {
+						pageSize = parseInt((e.target as HTMLSelectElement).value, 10);
+						currentPage = 1;
+					}}
+				>
+					{#each PAGE_SIZE_OPTIONS as size}
+						<option value={size}>{size === 0 ? 'All' : size}</option>
+					{/each}
+				</select>
+			</div>
+			<div class="pagination-center">
+				{#if pageSize !== 0}
+					<span class="text-sm text-sub">
+						Page {currentPage} of {totalPages}
+						({filteredRows.length} total)
+					</span>
+				{:else}
+					<span class="text-sm text-sub">
+						All {filteredRows.length} rows
+					</span>
+				{/if}
+			</div>
+			<div class="pagination-right">
+				<button
+					class="vui-btn"
+					onclick={() => { if (currentPage > 1) currentPage -= 1; }}
+					disabled={currentPage <= 1 || pageSize === 0}
+				>
+					&laquo; Prev
+				</button>
+				<button
+					class="vui-btn"
+					onclick={() => { if (currentPage < totalPages) currentPage += 1; }}
+					disabled={currentPage >= totalPages || pageSize === 0}
+				>
+					Next &raquo;
+				</button>
+			</div>
 		</div>
 	{/if}
 </div>
@@ -451,16 +616,32 @@
 		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
 		color: var(--vui-text);
+		vertical-align: top;
 	}
+
+	.cell-mapped {
+		font-family: var(--vui-font-mono, monospace);
+		font-size: var(--vui-text-sm);
+	}
+
 	.raw-value {
-		font-size: var(--vui-text-xs);
+		display: block;
 	}
-	.converted-arrow {
-		font-size: var(--vui-text-xs);
-		margin: 0 2px;
-	}
+
 	.computed-value {
-		color: var(--vui-accent);
+		color: var(--vui-accent, #16a34a);
+		font-weight: var(--vui-font-medium);
+	}
+
+	.state-text-input-wrap {
+		margin-top: 3px;
+	}
+
+	.compact-state-text {
+		width: 110px;
+		padding: 3px 6px;
+		font-size: var(--vui-text-xs);
+		font-family: var(--vui-font-mono, monospace);
 	}
 
 	.cell-input {
@@ -481,6 +662,11 @@
 		font-size: var(--vui-text-sm);
 	}
 
+	.col-check {
+		text-align: center;
+		padding: 4px 0;
+	}
+
 	.vui-checkbox {
 		cursor: pointer;
 		width: 15px;
@@ -490,5 +676,38 @@
 
 	.mono {
 		font-family: var(--vui-font-mono, monospace);
+	}
+
+	/* Pagination bar */
+	.pagination-bar {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--vui-space-md);
+		flex-shrink: 0;
+		padding: var(--vui-space-xs) 0;
+	}
+
+	.pagination-left {
+		display: flex;
+		align-items: center;
+		gap: var(--vui-space-xs);
+	}
+
+	.pagination-center {
+		flex: 1;
+		text-align: center;
+	}
+
+	.pagination-right {
+		display: flex;
+		align-items: center;
+		gap: var(--vui-space-xs);
+	}
+
+	.page-size-select {
+		width: 70px;
+		padding: 4px 6px;
+		font-size: var(--vui-text-sm);
 	}
 </style>
