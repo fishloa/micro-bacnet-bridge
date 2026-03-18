@@ -903,10 +903,62 @@ impl From<EngineeringUnits> for u32 {
 }
 
 // ---------------------------------------------------------------------------
-// Value conversion helpers (BACnet ↔ display/MQTT)
+// Legacy per-point configuration (used by the conversion helpers below).
+//
+// This struct is kept in bacnet.rs because it is only used by the legacy
+// `convert_from_bacnet` / `convert_to_bacnet` helpers and their unit tests.
+// New code should use `PointRule` (from `config`) together with the
+// `pipeline` module functions instead.
 // ---------------------------------------------------------------------------
 
-use crate::config::PointConfig;
+/// Legacy per-point display and routing configuration.
+///
+/// Kept for compatibility with the `convert_from_bacnet` / `convert_to_bacnet`
+/// conversion helpers. Prefer [`crate::config::PointRule`] + `pipeline` for new code.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PointConfig {
+    /// BACnet object type code.
+    pub object_type: u16,
+    /// BACnet object instance number.
+    pub object_instance: u32,
+    /// Multiplicative scale applied to raw numeric values (default 1.0).
+    pub scale: f32,
+    /// Additive offset applied after scale: `display = raw * scale + offset` (default 0.0).
+    pub offset: f32,
+    /// BACnet engineering unit code (ASHRAE 135 enumeration). 95 = no units.
+    pub engineering_unit: u16,
+    /// Show this point on the admin dashboard.
+    pub show_on_dashboard: bool,
+    /// Forward this point's value changes to BACnet/IP subscribers.
+    pub bridge_to_bacnet_ip: bool,
+    /// Publish this point's value to the MQTT broker.
+    pub bridge_to_mqtt: bool,
+    /// Expose this point in the HTTP REST API.
+    pub expose_in_api: bool,
+    /// State text for multi-state objects. Index 0 maps to state 1 (BACnet is 1-based).
+    pub state_text: heapless::Vec<heapless::String<16>, 16>,
+}
+
+impl Default for PointConfig {
+    fn default() -> Self {
+        Self {
+            object_type: 0,
+            object_instance: 0,
+            scale: 1.0,
+            offset: 0.0,
+            engineering_unit: 95,
+            show_on_dashboard: true,
+            bridge_to_bacnet_ip: true,
+            bridge_to_mqtt: true,
+            expose_in_api: true,
+            state_text: heapless::Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Value conversion helpers (BACnet ↔ display/MQTT)
+// ---------------------------------------------------------------------------
 
 /// Convert a raw BACnet value to a display/MQTT value using point configuration.
 ///
@@ -1659,7 +1711,6 @@ mod tests {
     // convert_from_bacnet / convert_to_bacnet tests
     // =====================================================================
 
-    use crate::config::PointConfig;
     use heapless::Vec as HVec;
 
     /// Build a PointConfig with given scale/offset and no state text.

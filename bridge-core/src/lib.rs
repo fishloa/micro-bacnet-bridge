@@ -8,18 +8,21 @@
 //!
 //! # Modules
 //!
-//! - [`bacnet`]  — BACnet PDU types (object IDs, property IDs, values, APDU/NPDU enums)
-//! - [`npdu`]    — NPDU encode/decode
-//! - [`config`]  — Configuration persistence types (`BridgeConfig`)
-//! - [`mdns`]    — mDNS / DNS-SD packet codec
-//! - [`ipc`]     — Inter-core ring buffer and `BacnetPdu` struct
-//! - [`error`]   — Shared error types (`EncodeError`, `DecodeError`, `BridgeError`)
-//! - [`ntp`]     — SNTP packet codec (RFC 4330)
-//! - [`syslog`]  — RFC 5424 syslog message formatter
-//! - [`ota`]     — OTA firmware update validation (ARM vector-table check)
-//! - [`snmp`]    — Minimal SNMP v2c agent codec (RFC 3416)
-//! - [`mqtt`]    — MQTT 3.1.1 publish-only client codec + HA auto-discovery
+//! - [`bacnet`]    — BACnet PDU types (object IDs, property IDs, values, APDU/NPDU enums)
+//! - [`npdu`]      — NPDU encode/decode
+//! - [`config`]    — Configuration persistence types (`BridgeConfig`, `PointRule`)
+//! - [`auth`]      — Password hashing, token verification, role-based permission checks
+//! - [`pipeline`]  — Processor pipeline: value transformation and exposure routing
+//! - [`mdns`]      — mDNS / DNS-SD packet codec
+//! - [`ipc`]       — Inter-core ring buffer and `BacnetPdu` struct
+//! - [`error`]     — Shared error types (`EncodeError`, `DecodeError`, `BridgeError`)
+//! - [`ntp`]       — SNTP packet codec (RFC 4330)
+//! - [`syslog`]    — RFC 5424 syslog message formatter
+//! - [`ota`]       — OTA firmware update validation (ARM vector-table check)
+//! - [`snmp`]      — Minimal SNMP v2c agent codec (RFC 3416)
+//! - [`mqtt`]      — MQTT 3.1.1 publish-only client codec + HA auto-discovery
 
+pub mod auth;
 pub mod bacnet;
 pub mod config;
 pub mod error;
@@ -29,17 +32,20 @@ pub mod mqtt;
 pub mod npdu;
 pub mod ntp;
 pub mod ota;
+pub mod pipeline;
 pub mod snmp;
 pub mod syslog;
 
 // Top-level re-exports of the most commonly used types.
 pub use bacnet::{
     convert_for_exposure, convert_from_bacnet, convert_to_bacnet, convert_write_for_exposure,
-    ApduType, BacnetValue, EngineeringUnits, Exposure, ObjectId, ObjectType, PropertyId,
-    ServiceChoice,
+    ApduType, BacnetValue, EngineeringUnits, Exposure, ObjectId, ObjectType, PointConfig,
+    PropertyId, ServiceChoice,
 };
 pub use config::{
-    BacnetDeviceConfig, BridgeConfig, NetworkConfig, PointConfig, UserConfig, UserRole,
+    BacnetDeviceConfig, BridgeConfig, ExposureConfig, MqttConfig, NetworkConfig, NtpConfig,
+    OtaConfig, PointMode, PointRule, Processor, SnmpConfig, SyslogConfig, TlsConfig, TokenConfig,
+    UserConfig, UserRole,
 };
 pub use error::{BridgeError, DecodeError, EncodeError};
 pub use ipc::{BacnetPdu, RingBuffer};

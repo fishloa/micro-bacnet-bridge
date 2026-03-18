@@ -1,31 +1,40 @@
 //! Flash-backed configuration persistence.
 //!
-//! `BridgeConfig` is serialised with `serde_json_core` and stored in the last
-//! 4 KiB sector of the 2 MiB flash. A magic number field provides validity
-//! detection; if the magic is absent the default config is returned.
+//! `BridgeConfig` is serialised with `serde_json_core` and stored in a 32 KiB
+//! config region at `CONFIG_OFFSET` (top-of-flash − 64 KiB). A magic number
+//! and version field provide validity detection; if the magic is absent the
+//! default config is returned.
 
 use bridge_core::config::BridgeConfig;
 use defmt::{error, info, warn};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
 
-/// Total flash size (2 MiB on W5500-EVB-Pico-PoE).
-pub const FLASH_SIZE: usize = 2 * 1024 * 1024;
+/// Total flash size — 4 MiB on Pico 2 (W5500-EVB-Pico-PoE with RP2350).
+pub const FLASH_SIZE: usize = 4 * 1024 * 1024;
 
 /// Size of one flash sector (erase granularity).
 const SECTOR_SIZE: usize = 4096;
 
-/// Byte offset from start-of-flash where config is stored (last 4 KiB sector).
-const CONFIG_OFFSET: u32 = (FLASH_SIZE - SECTOR_SIZE) as u32;
+/// Size of the config region (32 KiB = 8 contiguous 4 KiB sectors).
+/// A 32 KiB window gives headroom for the expanded v4 config (users × 8,
+/// tokens × 16, points × 256).
+const CONFIG_SIZE: usize = 32 * 1024;
 
-/// Identity sector: second-to-last 4 KiB sector. Stores the MAC address.
-/// This sector is NEVER erased by OTA or config writes — survives all reflashes.
+/// Byte offset from start-of-flash where config is stored.
+/// Placed in the 64 KiB "config partition" at the top of flash.
+/// 0x003F_0000 = FLASH_SIZE − 64 KiB.
+const CONFIG_OFFSET: u32 = (FLASH_SIZE - 64 * 1024) as u32; // 0x003F_0000
+
+/// Identity sector: one 4 KiB sector at the very top of flash.
+/// Stores the locally-administered MAC address and survives all config/OTA writes.
 /// Layout: [magic: 4 bytes] [mac: 6 bytes] [padding: rest]
-const IDENTITY_OFFSET: u32 = (FLASH_SIZE - 2 * SECTOR_SIZE) as u32;
+const IDENTITY_OFFSET: u32 = (FLASH_SIZE - 4 * 1024) as u32; // 0x003F_C000
 const IDENTITY_MAGIC: [u8; 4] = [0x49, 0x44, 0x4E, 0x54]; // "IDNT"
 
-/// Scratch buffer for JSON encode/decode — fits inside the sector.
-const JSON_BUF_SIZE: usize = SECTOR_SIZE;
+/// Scratch buffer for JSON encode/decode.
+/// 8 KiB is enough for the expanded v4 config including all point rules.
+const JSON_BUF_SIZE: usize = 8192;
 
 /// Thin wrapper that owns the flash peripheral and exposes load/save.
 pub struct ConfigManager {
@@ -109,9 +118,9 @@ impl ConfigManager {
     }
 
     /// Load `BridgeConfig` from flash. Returns `BridgeConfig::default()` if
-    /// the sector is blank or the magic number is invalid.
+    /// the config region is blank or the magic number is invalid.
     pub fn load(&mut self) -> BridgeConfig {
-        let mut sector_buf = [0u8; SECTOR_SIZE];
+        let mut sector_buf = [0u8; JSON_BUF_SIZE];
         match self.flash.blocking_read(CONFIG_OFFSET, &mut sector_buf) {
             Ok(()) => {}
             Err(_) => {
@@ -120,11 +129,11 @@ impl ConfigManager {
             }
         }
 
-        // Find the null terminator or use the whole sector
+        // Find the null terminator or use the whole buffer.
         let json_end = sector_buf
             .iter()
             .position(|&b| b == 0xFF || b == 0x00)
-            .unwrap_or(SECTOR_SIZE);
+            .unwrap_or(JSON_BUF_SIZE);
 
         if json_end < 2 {
             info!("config: blank sector, using defaults");
@@ -207,10 +216,10 @@ impl ConfigManager {
             }
         };
 
-        // Erase the sector
+        // Erase the config region (CONFIG_SIZE = 32 KiB = 8 sectors).
         if let Err(_) = self
             .flash
-            .blocking_erase(CONFIG_OFFSET, CONFIG_OFFSET + SECTOR_SIZE as u32)
+            .blocking_erase(CONFIG_OFFSET, CONFIG_OFFSET + CONFIG_SIZE as u32)
         {
             error!("config: flash erase error");
             return;
