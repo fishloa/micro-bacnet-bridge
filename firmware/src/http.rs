@@ -6,6 +6,7 @@
 //! - SSE stream at `/api/events`
 
 use crate::bridge::BRIDGE_STATE;
+use crate::ota;
 use crate::sse::handle_sse;
 use crate::web_assets;
 use bridge_core::config::BridgeConfig;
@@ -118,6 +119,15 @@ async fn handle_connection(socket: &mut TcpSocket<'_>) {
         ("PUT", "/api/v1/config/bacnet") => {
             let body = read_body(request);
             api_put_bacnet_config(socket, body).await;
+        }
+
+        // ---- OTA firmware update ----
+        ("POST", "/api/v1/system/firmware") => {
+            // Extract Content-Length from the raw header block.
+            let content_length = ota::parse_content_length(request).unwrap_or(0);
+            // The body bytes that were already read into req_buf (after \r\n\r\n).
+            let body_start = read_body(request).as_bytes();
+            ota::handle_firmware_upload(socket, content_length, body_start).await;
         }
 
         // ---- OpenAPI spec ----

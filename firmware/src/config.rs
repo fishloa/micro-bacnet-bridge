@@ -32,6 +32,14 @@ impl ConfigManager {
         Self { flash }
     }
 
+    /// Consume the `ConfigManager` and return the underlying flash peripheral.
+    ///
+    /// Used by `main` to hand the flash off to the OTA subsystem after the
+    /// initial config load is complete.
+    pub fn into_flash(self) -> Flash<'static, FLASH, Async, FLASH_SIZE> {
+        self.flash
+    }
+
     /// Load `BridgeConfig` from flash. Returns `BridgeConfig::default()` if
     /// the sector is blank or the magic number is invalid.
     pub fn load(&mut self) -> BridgeConfig {

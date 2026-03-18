@@ -5,6 +5,12 @@
 
 	let status: SystemStatus | null = $state(null);
 
+	// ---- OTA firmware update state ----
+	let otaFile: File | null = $state(null);
+	let otaProgress: number = $state(0); // 0–100
+	let otaStatus: 'idle' | 'uploading' | 'success' | 'error' = $state('idle');
+	let otaMessage: string = $state('');
+
 	onMount(async () => {
 		status = await api.getStatus();
 	});
@@ -25,6 +31,69 @@
 		if (h > 0) parts.push(`${h}h`);
 		parts.push(`${m}m`);
 		return parts.join(' ');
+	}
+
+	function onFileChange(e: Event) {
+		const input = e.target as HTMLInputElement;
+		otaFile = input.files?.[0] ?? null;
+		otaStatus = 'idle';
+		otaMessage = '';
+		otaProgress = 0;
+	}
+
+	async function uploadFirmware() {
+		if (!otaFile) return;
+
+		const MAX_SIZE = 1_500_000;
+		if (otaFile.size > MAX_SIZE) {
+			otaStatus = 'error';
+			otaMessage = `File is too large (${(otaFile.size / 1024).toFixed(0)} KB). Maximum allowed size is ${(MAX_SIZE / 1024).toFixed(0)} KB.`;
+			return;
+		}
+
+		if (!confirm('This will overwrite the running firmware and reboot the device. Continue?')) {
+			return;
+		}
+
+		otaStatus = 'uploading';
+		otaProgress = 0;
+		otaMessage = '';
+
+		try {
+			// Use XMLHttpRequest for upload progress events.
+			await new Promise<void>((resolve, reject) => {
+				const xhr = new XMLHttpRequest();
+				xhr.open('POST', '/api/v1/system/firmware');
+				xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+
+				xhr.upload.addEventListener('progress', (e) => {
+					if (e.lengthComputable) {
+						otaProgress = Math.round((e.loaded / e.total) * 100);
+					}
+				});
+
+				xhr.addEventListener('load', () => {
+					if (xhr.status === 200) {
+						otaProgress = 100;
+						resolve();
+					} else {
+						reject(new Error(`Server returned ${xhr.status}: ${xhr.responseText}`));
+					}
+				});
+
+				xhr.addEventListener('error', () => reject(new Error('Network error during upload')));
+				xhr.addEventListener('timeout', () => reject(new Error('Upload timed out')));
+				xhr.timeout = 120_000; // 2 minutes
+
+				xhr.send(otaFile);
+			});
+
+			otaStatus = 'success';
+			otaMessage = 'Firmware uploaded successfully. The device is rebooting — this page will become available again in 10–30 seconds.';
+		} catch (err: unknown) {
+			otaStatus = 'error';
+			otaMessage = err instanceof Error ? err.message : 'Unknown upload error';
+		}
 	}
 </script>
 
@@ -83,6 +152,59 @@
 				Reboot Device
 			</button>
 		</div>
+
+		<!-- OTA Firmware Update -->
+		<div class="vui-card vui-animate-fade-in" style="margin-top: var(--vui-space-lg);">
+			<div class="vui-section-header">Firmware Update</div>
+			<p class="text-sub" style="margin-bottom: var(--vui-space-md);">
+				Upload a raw ARM binary (<code>.bin</code>) to update the firmware.
+				The device will reboot automatically after the upload completes.
+			</p>
+
+			{#if otaStatus === 'success'}
+				<div class="vui-alert vui-alert-success">
+					{otaMessage}
+				</div>
+			{:else if otaStatus === 'error'}
+				<div class="vui-alert vui-alert-danger">
+					{otaMessage}
+				</div>
+			{/if}
+
+			<div class="ota-row">
+				<label class="vui-btn vui-btn-secondary ota-file-label">
+					{otaFile ? otaFile.name : 'Choose firmware .bin…'}
+					<input
+						type="file"
+						accept=".bin"
+						class="ota-file-input"
+						onchange={onFileChange}
+						disabled={otaStatus === 'uploading'}
+					/>
+				</label>
+
+				<button
+					class="vui-btn vui-btn-primary"
+					onclick={uploadFirmware}
+					disabled={!otaFile || otaStatus === 'uploading'}
+				>
+					{otaStatus === 'uploading' ? 'Uploading…' : 'Upload & Flash'}
+				</button>
+			</div>
+
+			{#if otaStatus === 'uploading'}
+				<div class="ota-progress-wrap">
+					<div class="ota-progress-bar" style="width: {otaProgress}%;"></div>
+				</div>
+				<p class="text-sub ota-progress-label">{otaProgress}%</p>
+			{/if}
+
+			<p class="ota-warning">
+				Warning: do not power off the device during a firmware update.
+				A power loss mid-write may leave the device unbootable and require
+				manual reflash via USB.
+			</p>
+		</div>
 	{:else}
 		<div class="vui-skeleton" style="height: 200px; border-radius: var(--vui-radius-md);"></div>
 	{/if}
@@ -126,5 +248,49 @@
 		justify-content: space-between;
 		padding: var(--vui-space-sm) 0;
 		border-bottom: 1px solid var(--vui-border);
+	}
+
+	/* ---- OTA firmware update ---- */
+	.ota-row {
+		display: flex;
+		gap: var(--vui-space-sm);
+		align-items: center;
+		flex-wrap: wrap;
+		margin-bottom: var(--vui-space-md);
+	}
+	.ota-file-label {
+		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		max-width: 340px;
+	}
+	.ota-file-input {
+		display: none;
+	}
+	.ota-progress-wrap {
+		height: 6px;
+		background: var(--vui-border);
+		border-radius: 3px;
+		overflow: hidden;
+		margin-bottom: 4px;
+	}
+	.ota-progress-bar {
+		height: 100%;
+		background: var(--vui-color-primary, #3b82f6);
+		border-radius: 3px;
+		transition: width 0.2s ease;
+	}
+	.ota-progress-label {
+		text-align: right;
+		font-size: var(--vui-text-xs);
+		margin-bottom: var(--vui-space-sm);
+	}
+	.ota-warning {
+		font-size: var(--vui-text-xs);
+		color: var(--vui-text-muted);
+		margin-top: var(--vui-space-md);
+		padding-top: var(--vui-space-sm);
+		border-top: 1px solid var(--vui-border);
 	}
 </style>

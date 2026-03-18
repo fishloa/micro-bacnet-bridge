@@ -11,6 +11,7 @@ mod ipc;
 mod mdns;
 mod mqtt;
 mod ntp;
+mod ota;
 mod snmp;
 mod sse;
 mod syslog;
@@ -117,6 +118,14 @@ async fn main(spawner: Spawner) {
         bridge_config.bacnet.device_id,
         bridge_config.hostname.as_str()
     );
+
+    // Hand the flash peripheral to the OTA subsystem now that the initial
+    // config load is complete.  Both config saves (future) and OTA writes
+    // will acquire ota::FLASH when they need flash access.
+    {
+        let mut flash_guard = ota::FLASH.lock().await;
+        *flash_guard = Some(cfg_mgr.into_flash());
+    }
 
     // Store loaded config in global for HTTP/mDNS tasks
     {

@@ -16,6 +16,7 @@
 //! - [`error`]   — Shared error types (`EncodeError`, `DecodeError`, `BridgeError`)
 //! - [`ntp`]     — SNTP packet codec (RFC 4330)
 //! - [`syslog`]  — RFC 5424 syslog message formatter
+//! - [`ota`]     — OTA firmware update validation (ARM vector-table check)
 //! - [`snmp`]    — Minimal SNMP v2c agent codec (RFC 3416)
 //! - [`mqtt`]    — MQTT 3.1.1 publish-only client codec + HA auto-discovery
 
@@ -27,6 +28,7 @@ pub mod mdns;
 pub mod mqtt;
 pub mod npdu;
 pub mod ntp;
+pub mod ota;
 pub mod snmp;
 pub mod syslog;
 
@@ -55,6 +57,7 @@ pub use ntp::{
     encode_request as ntp_encode_request, ntp_to_unix_epoch, NtpPacket, NtpTimestamp, NTP_PORT,
     NTP_UNIX_OFFSET, SNTP_PACKET_LEN,
 };
+pub use ota::{validate_firmware_image, MAX_FIRMWARE_SIZE};
 pub use snmp::{
     decode_get_request, encode_get_response, SnmpRequest, SnmpValue, VarBind, ERROR_GEN_ERR,
     ERROR_NO_ERROR, ERROR_NO_SUCH_NAME, OID_BACNET_DEVICES_DISCOVERED, OID_IPC_DROP_COUNT,
