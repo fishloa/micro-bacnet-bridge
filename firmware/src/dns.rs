@@ -50,9 +50,12 @@ pub async fn resolve(stack: Stack<'static>, hostname: &str) -> Option<[u8; 4]> {
             Ok(Ok(addrs)) => {
                 // Extract the first address; we queried A records so all
                 // results should be IPv4, but we filter defensively.
-                let ipv4 = addrs.iter().find_map(|addr| match *addr {
-                    IpAddress::Ipv4(v4) => Some(v4.octets()),
-                    _ => None,
+                let ipv4 = addrs.iter().find_map(|addr| {
+                    #[allow(unreachable_patterns)]
+                    match *addr {
+                        IpAddress::Ipv4(v4) => Some(v4.octets()),
+                        _ => None,
+                    }
                 });
                 if let Some(octets) = ipv4 {
                     return Some(octets);

@@ -12,13 +12,19 @@
 	$effect(() => {
 		const pts = $filteredPoints;
 		const newChanged = new Set<string>();
+		const currentKeys = new Set<string>();
 		for (const p of pts) {
 			const key = pointKey(p);
+			currentKeys.add(key);
 			const prev = prevValues.get(key);
 			if (prev !== undefined && prev !== p.presentValue) {
 				newChanged.add(key);
 			}
 			prevValues.set(key, p.presentValue);
+		}
+		// Prune entries for points no longer visible to prevent unbounded growth
+		for (const key of prevValues.keys()) {
+			if (!currentKeys.has(key)) prevValues.delete(key);
 		}
 		if (newChanged.size > 0) {
 			changedKeys = newChanged;

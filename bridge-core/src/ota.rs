@@ -70,10 +70,11 @@ pub fn validate_firmware_image(first_8_bytes: &[u8]) -> bool {
     let reset_vec = reset_raw & !1;
 
     // SP must be word-aligned and in SRAM (accept either chip's SRAM size).
-    let sp_valid = sp % 4 == 0 && sp >= RAM_BASE && (sp <= RAM_END_RP2040 || sp <= RAM_END_RP2350);
+    let sp_valid =
+        sp.is_multiple_of(4) && sp >= RAM_BASE && (sp <= RAM_END_RP2040 || sp <= RAM_END_RP2350);
 
     // Reset vector must be in flash.
-    let rv_valid = reset_vec >= FLASH_BASE && reset_vec < FLASH_END_MAX;
+    let rv_valid = (FLASH_BASE..FLASH_END_MAX).contains(&reset_vec);
 
     sp_valid && rv_valid
 }
@@ -212,5 +213,47 @@ mod tests {
     #[test]
     fn test_max_firmware_size_constant() {
         assert_eq!(MAX_FIRMWARE_SIZE, 1_500_000);
+    }
+
+    // --- Regression: clippy is_multiple_of / range contains refactor ---
+
+    /// Regression: SP at exact RAM_BASE must pass (word-aligned, in range).
+    #[test]
+    fn test_sp_at_exact_ram_base() {
+        let hdr = make_header(RAM_BASE, 0x1000_0101);
+        assert!(
+            validate_firmware_image(&hdr),
+            "SP == RAM_BASE should pass (word-aligned, in SRAM)"
+        );
+    }
+
+    /// Regression: reset vector at exact FLASH_BASE (no Thumb bit) must pass.
+    #[test]
+    fn test_reset_vec_at_exact_flash_base_no_thumb() {
+        let hdr = make_header(0x2003_E000, FLASH_BASE);
+        assert!(
+            validate_firmware_image(&hdr),
+            "reset vector at FLASH_BASE (even, no Thumb bit) should pass"
+        );
+    }
+
+    /// Regression: reset vector at FLASH_END_MAX must fail (exclusive upper bound).
+    #[test]
+    fn test_reset_vec_at_flash_end_max_fails() {
+        let hdr = make_header(0x2003_E000, FLASH_END_MAX | 1);
+        assert!(
+            !validate_firmware_image(&hdr),
+            "reset vector at FLASH_END_MAX should fail (exclusive bound)"
+        );
+    }
+
+    /// Regression: SP == 2 (word-aligned but below RAM_BASE) must fail.
+    #[test]
+    fn test_sp_below_ram_base_fails() {
+        let hdr = make_header(4, 0x1000_0101);
+        assert!(
+            !validate_firmware_image(&hdr),
+            "SP below RAM_BASE should fail"
+        );
     }
 }

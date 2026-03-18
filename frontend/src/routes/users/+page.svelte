@@ -44,16 +44,16 @@
 			<div class="vui-section-header">New User</div>
 			<form class="create-form" onsubmit={(e) => { e.preventDefault(); createUser(); }}>
 				<div class="vui-input-group">
-					<label>Username</label>
-					<input class="vui-input" bind:value={newUsername} placeholder="username" required />
+					<label for="new-username">Username</label>
+					<input class="vui-input" id="new-username" bind:value={newUsername} placeholder="username" required />
 				</div>
 				<div class="vui-input-group">
-					<label>Password</label>
-					<input class="vui-input" type="password" bind:value={newPassword} placeholder="password" required />
+					<label for="new-password">Password</label>
+					<input class="vui-input" id="new-password" type="password" bind:value={newPassword} placeholder="password" required />
 				</div>
 				<div class="vui-input-group">
-					<label>Role</label>
-					<select class="vui-input" bind:value={newRole}>
+					<label for="new-role">Role</label>
+					<select id="new-role" class="vui-input" bind:value={newRole}>
 						<option value="viewer">Viewer</option>
 						<option value="admin">Admin</option>
 					</select>
