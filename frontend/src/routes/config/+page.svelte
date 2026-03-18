@@ -157,8 +157,11 @@
 	</div>
 
 	<!-- SYSTEM SECTION -->
-	<h2 class="section-label">System</h2>
-	<div class="section-grid-3">
+	<div class="section-row">
+		<div class="section-sidebar">
+			<span class="section-sidebar-label">System</span>
+		</div>
+		<div class="section-grid-3">
 		<!-- Network Card -->
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
@@ -285,11 +288,15 @@
 				</tbody>
 			</table>
 		</div>
+		</div>
 	</div>
 
 	<!-- EXPOSURES SECTION -->
-	<h2 class="section-label">Exposures</h2>
-	<div class="section-grid-2">
+	<div class="section-row">
+		<div class="section-sidebar">
+			<span class="section-sidebar-label">Exposures</span>
+		</div>
+		<div class="section-grid-2">
 		<!-- BACnet/IP Card -->
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
@@ -372,11 +379,15 @@
 				{/if}
 			</div>
 		</div>
+		</div>
 	</div>
 
 	<!-- OPERATIONS SECTION -->
-	<h2 class="section-label">Operations</h2>
-	<div class="section-grid-2">
+	<div class="section-row">
+		<div class="section-sidebar">
+			<span class="section-sidebar-label">Operations</span>
+		</div>
+		<div class="section-grid-2">
 		<!-- Syslog Card -->
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
@@ -429,6 +440,7 @@
 			</table>
 		</div>
 	</div>
+	</div>
 </div>
 
 <style>
@@ -438,37 +450,48 @@
 		overflow-y: auto;
 	}
 
-	.section-label {
-		font-size: var(--vui-text-sm);
-		font-weight: var(--vui-font-semibold);
-		color: var(--vui-text-muted);
+	.section-row {
+		display: flex;
+		margin-bottom: var(--vui-space-lg);
+	}
+	.section-sidebar {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		min-width: 36px;
+		border-right: 3px solid var(--vui-accent);
+		margin-right: var(--vui-space-md);
+	}
+	.section-sidebar-label {
+		writing-mode: vertical-rl;
+		text-orientation: mixed;
+		transform: rotate(180deg);
+		font-size: var(--vui-text-xs);
+		font-weight: var(--vui-font-bold);
+		color: var(--vui-accent);
 		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		margin: var(--vui-space-lg) 0 var(--vui-space-sm);
+		letter-spacing: 0.1em;
+		white-space: nowrap;
 	}
-
-	.section-label:first-of-type {
-		margin-top: 0;
-	}
-
 	.section-grid-3 {
 		display: grid;
 		grid-template-columns: repeat(3, 1fr);
 		gap: var(--vui-space-lg);
-		margin-bottom: var(--vui-space-lg);
+		flex: 1;
 	}
-
 	.section-grid-2 {
 		display: grid;
 		grid-template-columns: repeat(2, 1fr);
 		gap: var(--vui-space-lg);
-		margin-bottom: var(--vui-space-lg);
+		flex: 1;
+		max-width: 66%;
 	}
-
 	@media (max-width: 1000px) {
 		.section-grid-3,
 		.section-grid-2 {
 			grid-template-columns: 1fr;
+			max-width: 100%;
 		}
 	}
 
