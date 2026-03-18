@@ -485,13 +485,13 @@
 	.device-tab {
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 8px 14px;
+		gap: 8px;
+		padding: 10px 16px;
 		border: 1px solid var(--vui-border);
 		border-radius: var(--vui-radius-md);
 		background: none;
-		color: var(--vui-text-sub);
-		font-size: var(--vui-text-sm);
+		color: var(--vui-text);
+		font-size: var(--vui-text-base);
 		cursor: pointer;
 		white-space: nowrap;
 	}
@@ -599,9 +599,9 @@
 	thead th {
 		text-align: left;
 		padding: var(--vui-space-sm) var(--vui-space-sm);
-		font-size: var(--vui-text-xs);
+		font-size: var(--vui-text-sm);
 		font-weight: var(--vui-font-semibold);
-		color: var(--vui-text-muted);
+		color: var(--vui-accent);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--vui-border);

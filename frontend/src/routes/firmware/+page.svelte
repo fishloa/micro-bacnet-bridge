@@ -214,9 +214,9 @@
 			<p class="text-sub ota-progress-label">{otaProgress}%</p>
 		{/if}
 
-		<p class="ota-warning">
-			Warning: do not power off the device during a firmware update.
-		</p>
+		<div class="vui-alert vui-alert-danger">
+			&#9888; Warning: do not power off the device during a firmware update.
+		</div>
 	</div>
 </div>
 

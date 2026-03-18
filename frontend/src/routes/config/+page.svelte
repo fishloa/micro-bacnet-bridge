@@ -426,7 +426,7 @@
 		writing-mode: vertical-rl;
 		text-orientation: mixed;
 		transform: rotate(180deg);
-		font-size: var(--vui-text-xs);
+		font-size: var(--vui-text-sm);
 		font-weight: var(--vui-font-bold);
 		color: var(--vui-accent);
 		text-transform: uppercase;
@@ -468,8 +468,6 @@
 
 	.form-table .field-label {
 		width: 160px;
-		font-size: var(--vui-text-sm);
-		color: var(--vui-text-sub);
 		font-weight: var(--vui-font-medium);
 		white-space: nowrap;
 		padding-right: var(--vui-space-md);
