@@ -34,7 +34,9 @@ pub mod syslog;
 
 // Top-level re-exports of the most commonly used types.
 pub use bacnet::{
-    ApduType, BacnetValue, EngineeringUnits, ObjectId, ObjectType, PropertyId, ServiceChoice,
+    convert_for_exposure, convert_from_bacnet, convert_to_bacnet, convert_write_for_exposure,
+    ApduType, BacnetValue, EngineeringUnits, Exposure, ObjectId, ObjectType, PropertyId,
+    ServiceChoice,
 };
 pub use config::{
     BacnetDeviceConfig, BridgeConfig, NetworkConfig, PointConfig, UserConfig, UserRole,

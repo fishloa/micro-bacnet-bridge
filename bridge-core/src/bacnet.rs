@@ -1020,6 +1020,52 @@ pub fn convert_to_bacnet(display_value: &str, config: &PointConfig) -> Option<Ba
     None
 }
 
+/// Exposure channel identifier for routing decisions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exposure {
+    Dashboard,
+    BacnetIp,
+    Mqtt,
+    HttpApi,
+}
+
+/// Check whether a point is enabled for a given exposure channel.
+pub fn is_exposed(config: &PointConfig, exposure: Exposure) -> bool {
+    match exposure {
+        Exposure::Dashboard => config.show_on_dashboard,
+        Exposure::BacnetIp => config.bridge_to_bacnet_ip,
+        Exposure::Mqtt => config.bridge_to_mqtt,
+        Exposure::HttpApi => config.expose_in_api,
+    }
+}
+
+/// Convert a raw BACnet value for a specific exposure channel.
+/// Returns `None` if the point is not exposed on that channel.
+/// Returns `Some(converted_value)` if exposed.
+pub fn convert_for_exposure(
+    value: &BacnetValue,
+    config: &PointConfig,
+    exposure: Exposure,
+) -> Option<BacnetValue> {
+    if !is_exposed(config, exposure) {
+        return None;
+    }
+    Some(convert_from_bacnet(value, config))
+}
+
+/// Convert a user/MQTT write value back to BACnet, respecting exposure.
+/// Returns `None` if the point is not writable on that channel or parse fails.
+pub fn convert_write_for_exposure(
+    display_value: &str,
+    config: &PointConfig,
+    exposure: Exposure,
+) -> Option<BacnetValue> {
+    if !is_exposed(config, exposure) {
+        return None;
+    }
+    convert_to_bacnet(display_value, config)
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -2012,8 +2058,10 @@ mod tests {
             scale: 1.0,
             offset: 0.0,
             engineering_unit: 95,
+            show_on_dashboard: true,
             bridge_to_bacnet_ip: true,
             bridge_to_mqtt: false,
+            expose_in_api: true,
             state_text: {
                 let mut v: heapless::Vec<heapless::String<16>, 16> = heapless::Vec::new();
                 for label in &["Off", "Heat", "Cool", "Auto"] {
@@ -2034,5 +2082,268 @@ mod tests {
         assert_eq!(recovered.state_text.len(), 4);
         assert_eq!(recovered.state_text[0].as_str(), "Off");
         assert_eq!(recovered.state_text[3].as_str(), "Auto");
+    }
+
+    // =====================================================================
+    // Exposure-aware conversion tests — all 4 channels
+    // =====================================================================
+
+    fn full_cfg(scale: f32, offset: f32) -> PointConfig {
+        PointConfig {
+            scale,
+            offset,
+            show_on_dashboard: true,
+            bridge_to_bacnet_ip: true,
+            bridge_to_mqtt: true,
+            expose_in_api: true,
+            ..PointConfig::default()
+        }
+    }
+
+    fn disabled_cfg(exposure: Exposure) -> PointConfig {
+        let mut cfg = full_cfg(2.0, 10.0);
+        match exposure {
+            Exposure::Dashboard => cfg.show_on_dashboard = false,
+            Exposure::BacnetIp => cfg.bridge_to_bacnet_ip = false,
+            Exposure::Mqtt => cfg.bridge_to_mqtt = false,
+            Exposure::HttpApi => cfg.expose_in_api = false,
+        }
+        cfg
+    }
+
+    #[test]
+    fn test_exposure_all_enabled_converts() {
+        let cfg = full_cfg(2.0, 10.0);
+        let raw = BacnetValue::Real(5.0);
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            let result = convert_for_exposure(&raw, &cfg, exp);
+            assert_eq!(
+                result,
+                Some(BacnetValue::Real(20.0)),
+                "exposure {:?} failed",
+                exp
+            );
+        }
+    }
+
+    #[test]
+    fn test_exposure_dashboard_disabled_blocks() {
+        let cfg = disabled_cfg(Exposure::Dashboard);
+        let raw = BacnetValue::Real(5.0);
+        assert_eq!(convert_for_exposure(&raw, &cfg, Exposure::Dashboard), None);
+        // Other channels still work
+        assert_eq!(
+            convert_for_exposure(&raw, &cfg, Exposure::BacnetIp),
+            Some(BacnetValue::Real(20.0))
+        );
+        assert_eq!(
+            convert_for_exposure(&raw, &cfg, Exposure::Mqtt),
+            Some(BacnetValue::Real(20.0))
+        );
+        assert_eq!(
+            convert_for_exposure(&raw, &cfg, Exposure::HttpApi),
+            Some(BacnetValue::Real(20.0))
+        );
+    }
+
+    #[test]
+    fn test_exposure_bacnetip_disabled_blocks() {
+        let cfg = disabled_cfg(Exposure::BacnetIp);
+        let raw = BacnetValue::Real(5.0);
+        assert_eq!(convert_for_exposure(&raw, &cfg, Exposure::BacnetIp), None);
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::Dashboard).is_some());
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::Mqtt).is_some());
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::HttpApi).is_some());
+    }
+
+    #[test]
+    fn test_exposure_mqtt_disabled_blocks() {
+        let cfg = disabled_cfg(Exposure::Mqtt);
+        let raw = BacnetValue::Real(5.0);
+        assert_eq!(convert_for_exposure(&raw, &cfg, Exposure::Mqtt), None);
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::Dashboard).is_some());
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::BacnetIp).is_some());
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::HttpApi).is_some());
+    }
+
+    #[test]
+    fn test_exposure_api_disabled_blocks() {
+        let cfg = disabled_cfg(Exposure::HttpApi);
+        let raw = BacnetValue::Real(5.0);
+        assert_eq!(convert_for_exposure(&raw, &cfg, Exposure::HttpApi), None);
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::Dashboard).is_some());
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::BacnetIp).is_some());
+        assert!(convert_for_exposure(&raw, &cfg, Exposure::Mqtt).is_some());
+    }
+
+    #[test]
+    fn test_exposure_write_blocked_when_disabled() {
+        let cfg = disabled_cfg(Exposure::Mqtt);
+        assert_eq!(
+            convert_write_for_exposure("42.0", &cfg, Exposure::Mqtt),
+            None
+        );
+        // But writing via API still works
+        let result = convert_write_for_exposure("42.0", &cfg, Exposure::HttpApi);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_exposure_write_reverse_scale_all_channels() {
+        // display = raw*2+10 → raw = (display-10)/2
+        let cfg = full_cfg(2.0, 10.0);
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            let result = convert_write_for_exposure("20", &cfg, exp);
+            match result {
+                Some(BacnetValue::Real(v)) => {
+                    assert!((v - 5.0).abs() < 1e-4, "{:?}: got {}", exp, v)
+                }
+                other => panic!("{:?}: expected Real(5.0), got {:?}", exp, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_exposure_state_text_all_channels() {
+        let mut cfg = full_cfg(1.0, 0.0);
+        let labels = ["Off", "Heat", "Cool", "Auto"];
+        for label in &labels {
+            let mut s = heapless::String::<16>::new();
+            let _ = s.push_str(label);
+            let _ = cfg.state_text.push(s);
+        }
+        let raw = BacnetValue::Enumerated(4); // Auto
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            let result = convert_for_exposure(&raw, &cfg, exp);
+            match result {
+                Some(BacnetValue::CharString(s)) => {
+                    assert_eq!(s.as_str(), "Auto", "{:?} failed", exp)
+                }
+                other => panic!("{:?}: expected CharString(Auto), got {:?}", exp, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_exposure_state_text_write_all_channels() {
+        let mut cfg = full_cfg(1.0, 0.0);
+        for label in &["Off", "Heat", "Cool", "Auto"] {
+            let mut s = heapless::String::<16>::new();
+            let _ = s.push_str(label);
+            let _ = cfg.state_text.push(s);
+        }
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            let result = convert_write_for_exposure("Cool", &cfg, exp);
+            assert_eq!(result, Some(BacnetValue::Enumerated(3)), "{:?} failed", exp);
+        }
+    }
+
+    #[test]
+    fn test_exposure_boolean_all_channels() {
+        let cfg = full_cfg(1.0, 0.0);
+        let raw = BacnetValue::Boolean(true);
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            let result = convert_for_exposure(&raw, &cfg, exp);
+            assert_eq!(result, Some(BacnetValue::Boolean(true)), "{:?} failed", exp);
+        }
+    }
+
+    #[test]
+    fn test_exposure_boolean_write_all_channels() {
+        let cfg = full_cfg(1.0, 0.0);
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            assert_eq!(
+                convert_write_for_exposure("ON", &cfg, exp),
+                Some(BacnetValue::Boolean(true))
+            );
+            assert_eq!(
+                convert_write_for_exposure("OFF", &cfg, exp),
+                Some(BacnetValue::Boolean(false))
+            );
+        }
+    }
+
+    #[test]
+    fn test_exposure_all_disabled_blocks_everything() {
+        let cfg = PointConfig {
+            show_on_dashboard: false,
+            bridge_to_bacnet_ip: false,
+            bridge_to_mqtt: false,
+            expose_in_api: false,
+            ..PointConfig::default()
+        };
+        let raw = BacnetValue::Real(42.0);
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            assert_eq!(
+                convert_for_exposure(&raw, &cfg, exp),
+                None,
+                "read {:?} should be blocked",
+                exp
+            );
+            assert_eq!(
+                convert_write_for_exposure("42", &cfg, exp),
+                None,
+                "write {:?} should be blocked",
+                exp
+            );
+        }
+    }
+
+    #[test]
+    fn test_exposure_roundtrip_per_channel() {
+        // Full roundtrip: raw → convert_for_exposure → display string → convert_write_for_exposure → raw
+        let cfg = full_cfg(0.5, -5.0);
+        let original = BacnetValue::Real(30.0); // display = 30*0.5 + (-5) = 10.0
+        for exp in [
+            Exposure::Dashboard,
+            Exposure::BacnetIp,
+            Exposure::Mqtt,
+            Exposure::HttpApi,
+        ] {
+            let display = convert_for_exposure(&original, &cfg, exp).unwrap();
+            assert_eq!(display, BacnetValue::Real(10.0));
+            let back = convert_write_for_exposure("10", &cfg, exp);
+            match back {
+                Some(BacnetValue::Real(v)) => {
+                    assert!((v - 30.0).abs() < 1e-4, "{:?}: roundtrip got {}", exp, v)
+                }
+                other => panic!("{:?}: roundtrip got {:?}", exp, other),
+            }
+        }
     }
 }

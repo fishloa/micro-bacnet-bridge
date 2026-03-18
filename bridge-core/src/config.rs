@@ -306,10 +306,14 @@ pub struct PointConfig {
     pub offset: f32,
     /// BACnet engineering unit code (ASHRAE 135 enumeration). 95 = no units.
     pub engineering_unit: u16,
-    /// When true, forward this point's value changes to BACnet/IP subscribers.
+    /// Show this point on the admin dashboard.
+    pub show_on_dashboard: bool,
+    /// Forward this point's value changes to BACnet/IP subscribers.
     pub bridge_to_bacnet_ip: bool,
-    /// When true, publish this point's value to the MQTT broker.
+    /// Publish this point's value to the MQTT broker.
     pub bridge_to_mqtt: bool,
+    /// Expose this point in the HTTP REST API.
+    pub expose_in_api: bool,
     /// State text for multi-state objects. Index 0 maps to state 1 (BACnet is 1-based).
     /// Up to 16 states, each label up to 16 characters.
     pub state_text: Vec<String<16>, 16>,
@@ -323,8 +327,10 @@ impl Default for PointConfig {
             scale: 1.0,
             offset: 0.0,
             engineering_unit: 95,
+            show_on_dashboard: true,
             bridge_to_bacnet_ip: true,
             bridge_to_mqtt: true,
+            expose_in_api: true,
             state_text: Vec::new(),
         }
     }
