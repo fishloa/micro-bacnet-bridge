@@ -41,8 +41,9 @@ pub use mdns::{
 };
 pub use mqtt::{
     decode_connack, decode_packet_type, encode_connect, encode_disconnect, encode_pingreq,
-    encode_publish, format_ha_discovery, ha_discovery_topic, MQTT_PORT, PACKET_TYPE_CONNACK,
-    PACKET_TYPE_CONNECT, PACKET_TYPE_DISCONNECT, PACKET_TYPE_PINGREQ, PACKET_TYPE_PUBLISH,
+    encode_publish, format_ha_discovery, ha_discovery_topic, HaDiscoveryParams, MQTT_PORT,
+    PACKET_TYPE_CONNACK, PACKET_TYPE_CONNECT, PACKET_TYPE_DISCONNECT, PACKET_TYPE_PINGREQ,
+    PACKET_TYPE_PUBLISH,
 };
 pub use npdu::{decode_npdu, encode_npdu, NpduHeader};
 pub use ntp::{

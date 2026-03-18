@@ -223,10 +223,10 @@ pub fn encode_connect(
     let client_id_bytes = client_id.as_bytes();
     let mut payload_len = 2 + client_id_bytes.len();
     if let Some(u) = username {
-        payload_len += 2 + u.as_bytes().len();
+        payload_len += 2 + u.len();
     }
     if let Some(p) = password {
-        payload_len += 2 + p.as_bytes().len();
+        payload_len += 2 + p.len();
     }
 
     let remaining = vh_len + payload_len;
@@ -445,16 +445,30 @@ pub fn ha_discovery_topic(
 /// Binary objects use component `binary_sensor` (no `unit_of_measurement` key).
 ///
 /// Returns the number of bytes written to `buf` on success.
+/// Parameters for Home Assistant MQTT auto-discovery.
+pub struct HaDiscoveryParams<'a> {
+    pub discovery_prefix: &'a str,
+    pub device_name: &'a str,
+    pub point_name: &'a str,
+    pub object_type: &'a str,
+    pub object_instance: u32,
+    pub unit: &'a str,
+    pub state_topic: &'a str,
+}
+
 pub fn format_ha_discovery(
     buf: &mut [u8],
-    discovery_prefix: &str,
-    device_name: &str,
-    point_name: &str,
-    object_type: &str,
-    object_instance: u32,
-    unit: &str,
-    state_topic: &str,
+    params: &HaDiscoveryParams<'_>,
 ) -> Result<usize, EncodeError> {
+    let HaDiscoveryParams {
+        discovery_prefix,
+        device_name,
+        point_name,
+        object_type,
+        object_instance,
+        unit,
+        state_topic,
+    } = params;
     // Build unique_id: replace hyphens with underscores for a valid identifier.
     // We write it directly into a stack-allocated scratch buffer.
     let _ = discovery_prefix; // used via ha_discovery_topic; present for API symmetry
@@ -749,13 +763,15 @@ mod tests {
         let mut buf = [0u8; 512];
         let n = format_ha_discovery(
             &mut buf,
-            "homeassistant",
-            "bacnet-bridge",
-            "Supply Air Temp",
-            "analog-input",
-            0,
-            "°C",
-            "bacnet-bridge/analog-input/0/state",
+            &HaDiscoveryParams {
+                discovery_prefix: "homeassistant",
+                device_name: "bacnet-bridge",
+                point_name: "Supply Air Temp",
+                object_type: "analog-input",
+                object_instance: 0,
+                unit: "°C",
+                state_topic: "bacnet-bridge/analog-input/0/state",
+            },
         )
         .unwrap();
 
@@ -776,13 +792,15 @@ mod tests {
         let mut buf = [0u8; 512];
         let n = format_ha_discovery(
             &mut buf,
-            "homeassistant",
-            "bacnet-bridge",
-            "Occupied",
-            "binary-input",
-            3,
-            "",
-            "bacnet-bridge/binary-input/3/state",
+            &HaDiscoveryParams {
+                discovery_prefix: "homeassistant",
+                device_name: "bacnet-bridge",
+                point_name: "Occupied",
+                object_type: "binary-input",
+                object_instance: 3,
+                unit: "",
+                state_topic: "bacnet-bridge/binary-input/3/state",
+            },
         )
         .unwrap();
 
@@ -839,13 +857,15 @@ mod tests {
         let mut payload_buf = [0u8; 512];
         let payload_len = format_ha_discovery(
             &mut payload_buf,
-            "homeassistant",
-            "bacnet-bridge",
-            "Supply Air Temp",
-            "analog-input",
-            0,
-            "°C",
-            "bacnet-bridge/analog-input/0/state",
+            &HaDiscoveryParams {
+                discovery_prefix: "homeassistant",
+                device_name: "bacnet-bridge",
+                point_name: "Supply Air Temp",
+                object_type: "analog-input",
+                object_instance: 0,
+                unit: "°C",
+                state_topic: "bacnet-bridge/analog-input/0/state",
+            },
         )
         .unwrap();
 

@@ -23,7 +23,7 @@
 use bridge_core::bacnet::BacnetValue;
 use bridge_core::mqtt::{
     decode_connack, encode_connect, encode_disconnect, encode_pingreq, encode_publish,
-    format_ha_discovery, ha_discovery_topic, MQTT_PORT,
+    format_ha_discovery, ha_discovery_topic, HaDiscoveryParams, MQTT_PORT,
 };
 use defmt::{info, warn};
 use embassy_net::tcp::TcpSocket;
@@ -295,13 +295,15 @@ async fn publish_ha_discovery(socket: &mut TcpSocket<'_>) {
             let mut payload_buf = [0u8; 512];
             let payload_len = match format_ha_discovery(
                 &mut payload_buf,
-                HA_DISCOVERY_PREFIX,
-                device_name_str,
-                point_name,
-                object_type_str,
-                instance,
-                "",
-                state_topic.as_str(),
+                &HaDiscoveryParams {
+                    discovery_prefix: HA_DISCOVERY_PREFIX,
+                    device_name: device_name_str,
+                    point_name,
+                    object_type: object_type_str,
+                    object_instance: instance,
+                    unit: "",
+                    state_topic: state_topic.as_str(),
+                },
             ) {
                 Ok(n) => n,
                 Err(_) => continue,
