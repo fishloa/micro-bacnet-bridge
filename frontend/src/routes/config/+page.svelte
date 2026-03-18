@@ -129,7 +129,7 @@
 				<tbody>
 					<tr>
 						<td class="field-label">DHCP</td>
-						<td><input type="checkbox" bind:checked={net.dhcp} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						<td><input type="checkbox" class="vui-checkbox" bind:checked={net.dhcp} /></td>
 					</tr>
 					<tr>
 						<td class="field-label">Hostname</td>
@@ -214,12 +214,12 @@
 				<tbody>
 					<tr>
 						<td class="field-label">Enabled</td>
-						<td><input type="checkbox" bind:checked={ntp.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						<td><input type="checkbox" class="vui-checkbox" bind:checked={ntp.enabled} /></td>
 					</tr>
 					{#if ntp.enabled}
 						<tr>
 							<td class="field-label">Use DHCP Servers</td>
-							<td><input type="checkbox" bind:checked={ntp.use_dhcp_servers} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+							<td><input type="checkbox" class="vui-checkbox" bind:checked={ntp.use_dhcp_servers} /></td>
 						</tr>
 						{#if !ntp.use_dhcp_servers}
 							<tr>
@@ -264,7 +264,7 @@
 				<tbody>
 					<tr>
 						<td class="field-label">Enabled</td>
-						<td><input type="checkbox" bind:checked={bacnet.bacnetIpEnabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						<td><input type="checkbox" class="vui-checkbox" bind:checked={bacnet.bacnetIpEnabled} /></td>
 					</tr>
 				</tbody>
 			</table>
@@ -283,7 +283,7 @@
 					<tbody>
 						<tr>
 							<td class="field-label">Enabled</td>
-							<td><input type="checkbox" bind:checked={mqtt.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+							<td><input type="checkbox" class="vui-checkbox" bind:checked={mqtt.enabled} /></td>
 						</tr>
 						{#if mqtt.enabled}
 							<tr>
@@ -296,7 +296,7 @@
 							</tr>
 							<tr>
 								<td class="field-label">TLS (port 8883)</td>
-								<td><input type="checkbox" bind:checked={mqtt.tls_enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+								<td><input type="checkbox" class="vui-checkbox" bind:checked={mqtt.tls_enabled} /></td>
 							</tr>
 							<tr>
 								<td class="field-label">Client ID</td>
@@ -316,7 +316,7 @@
 							</tr>
 							<tr>
 								<td class="field-label">HA Auto-Discovery</td>
-								<td><input type="checkbox" bind:checked={mqtt.ha_discovery_enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+								<td><input type="checkbox" class="vui-checkbox" bind:checked={mqtt.ha_discovery_enabled} /></td>
 							</tr>
 							{#if mqtt.ha_discovery_enabled}
 								<tr>
@@ -359,7 +359,7 @@
 				<tbody>
 					<tr>
 						<td class="field-label">Enabled</td>
-						<td><input type="checkbox" bind:checked={syslog.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						<td><input type="checkbox" class="vui-checkbox" bind:checked={syslog.enabled} /></td>
 					</tr>
 					{#if syslog.enabled}
 						<tr>
@@ -387,7 +387,7 @@
 				<tbody>
 					<tr>
 						<td class="field-label">Enabled</td>
-						<td><input type="checkbox" bind:checked={snmp.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						<td><input type="checkbox" class="vui-checkbox" bind:checked={snmp.enabled} /></td>
 					</tr>
 					{#if snmp.enabled}
 						<tr>

@@ -93,10 +93,21 @@ The RP2040 runs only the compiled firmware binary. No runtime interpreters.
   <link rel="stylesheet" href="https://icomb.place/design-system/verdant-base.css">
   ```
   Use `vui-*` CSS classes (vui-btn, vui-card, vui-glass, vui-badge, vui-input,
-  vui-alert, vui-dropdown, vui-section-header, etc.) and `--vui-*` CSS custom
-  properties for all styling. Do NOT define custom colours or component styles
-  that duplicate what the design system already provides. The design system
-  source lives at ../icomb-place-design-system/ for reference.
+  vui-alert, vui-dropdown, vui-section-header, vui-checkbox, etc.) and `--vui-*`
+  CSS custom properties for all styling.
+
+  **STRICT RULES — no exceptions:**
+  1. **ZERO inline `style=""` attributes.** If a style is needed, add a class
+     to the design system or app.css. Never use inline styles.
+  2. **Use design system classes as-is.** Do not override vui-* classes with
+     custom CSS. If a component looks wrong, fix the design system source at
+     `../icomb-place-design-system/`, commit, push, and let CI deploy it.
+  3. **Do NOT define custom colours or component styles** that duplicate what
+     the design system provides. If a new pattern is needed (e.g. checkbox,
+     table headers), add it to the design system first.
+  4. **The design system source lives at ../icomb-place-design-system/.** Changes
+     go there, get committed and pushed, CI builds and deploys automatically.
+     NEVER manually docker build/push — CI handles all deployments.
 - Auth: session cookie, bcrypt-hashed passwords, configurable users with roles
   (admin: full access, viewer: read-only)
 - Password reset: if no users configured, allow setup on first access

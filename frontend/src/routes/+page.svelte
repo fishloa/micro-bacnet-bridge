@@ -102,9 +102,9 @@
 				<span class="device-info">
 					<span class="device-name">{dev.name}</span>
 					<span class="device-meta">
-						<span class="vui-badge vui-badge-info" style="font-size: 10px; padding: 1px 4px;">ID {dev.id}</span>
+						<span class="vui-badge vui-badge-info">ID {dev.id}</span>
 						{#if dev.mac}
-							<span class="device-mac">{dev.mac}</span>
+							<span class="vui-badge vui-badge-info">MAC {dev.mac}</span>
 						{/if}
 					</span>
 				</span>
@@ -156,35 +156,38 @@
 	}
 
 	.device-count {
-		background: var(--vui-border);
+		background: var(--vui-accent-dim);
 		border-radius: 10px;
-		padding: 1px 6px;
-		font-size: 11px;
-		color: var(--vui-text-sub);
+		padding: 2px 8px;
+		font-size: var(--vui-text-xs);
+		color: var(--vui-accent);
+		font-weight: var(--vui-font-semibold);
 	}
 
 	.device-item {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		padding: 8px 10px;
+		gap: 10px;
+		padding: 10px 12px;
 		cursor: pointer;
-		border: none;
+		border: 1px solid transparent;
 		background: transparent;
 		color: var(--vui-text);
 		text-align: left;
 		width: 100%;
-		font-size: var(--vui-text-sm);
+		font-size: var(--vui-text-base);
 		border-bottom: 1px solid var(--vui-border);
+		border-radius: var(--vui-radius-md);
 		transition: background 0.12s;
 	}
 
 	.device-item:hover {
-		background: var(--vui-surface-hover, rgba(255,255,255,0.05));
+		background: var(--vui-surface-hover);
 	}
 
 	.device-item.active {
-		background: var(--vui-accent-soft, rgba(var(--vui-accent-rgb, 59,130,246),0.12));
+		background: var(--vui-accent-dim);
+		border: 1px solid var(--vui-accent-border);
 		color: var(--vui-accent);
 	}
 
@@ -213,7 +216,8 @@
 	}
 
 	.device-name {
-		font-weight: var(--vui-font-medium);
+		font-weight: var(--vui-font-semibold);
+		color: var(--vui-text);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -222,13 +226,13 @@
 	.device-meta {
 		display: flex;
 		align-items: center;
-		gap: 4px;
+		gap: 6px;
 	}
 
 	.device-mac {
-		font-family: monospace;
-		font-size: 10px;
-		color: var(--vui-text-muted);
+		font-family: var(--vui-font-mono);
+		font-size: var(--vui-text-xs);
+		color: var(--vui-text-sub);
 	}
 
 	.no-devices {

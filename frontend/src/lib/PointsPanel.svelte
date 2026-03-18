@@ -136,7 +136,7 @@
 								<td class="text-sub text-sm mono">{(point as BacnetPoint & { _deviceId?: number })._deviceId ?? $deviceId}</td>
 							{/if}
 							<td class="point-name">{point.objectName}</td>
-							<td class="text-sub text-sm">{point.description}</td>
+							<td>{point.description}</td>
 							<td class="point-value mono" class:value-changed={changedKeys.has(pointKey(point))}>
 								{#if editingPoint?.objectType === point.objectType && editingPoint?.objectInstance === point.objectInstance}
 									<form class="edit-form" onsubmit={(e) => { e.preventDefault(); submitEdit(); }}>
@@ -193,17 +193,19 @@
 		gap: 2px;
 	}
 	.tab-btn {
-		padding: 6px 12px;
+		padding: 8px 14px;
 		border: none;
 		background: none;
-		color: var(--vui-text-muted);
+		color: var(--vui-text-sub);
 		font-size: var(--vui-text-sm);
-		font-weight: var(--vui-font-medium);
+		font-weight: var(--vui-font-semibold);
+		text-transform: uppercase;
+		letter-spacing: 0.04em;
 		border-radius: var(--vui-radius-sm);
 		cursor: pointer;
 	}
 	.tab-btn:hover {
-		color: var(--vui-text);
+		color: var(--vui-accent);
 		background: var(--vui-surface);
 	}
 	.tab-btn.active {
@@ -232,9 +234,9 @@
 	th {
 		text-align: left;
 		padding: var(--vui-space-sm) var(--vui-space-sm);
-		font-size: var(--vui-text-xs);
+		font-size: var(--vui-text-sm);
 		font-weight: var(--vui-font-semibold);
-		color: var(--vui-text-muted);
+		color: var(--vui-accent);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--vui-border);
@@ -266,10 +268,10 @@
 		100% { background: transparent; }
 	}
 	.bool-active {
-		color: var(--vui-accent);
+		color: var(--vui-text);
 	}
 	.bool-inactive {
-		color: var(--vui-text-muted);
+		color: var(--vui-text);
 	}
 	.write-btn {
 		opacity: 0.4;
