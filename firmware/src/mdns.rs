@@ -24,7 +24,7 @@ const TX_BUF: usize = 512;
 const META_COUNT: usize = 4;
 
 /// Firmware version string embedded in TXT records.
-const FIRMWARE_VERSION: &str = "0.1.0";
+const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// HTTP port for SRV records.
 const HTTP_PORT: u16 = 80;

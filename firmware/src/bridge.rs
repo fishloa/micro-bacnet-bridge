@@ -16,7 +16,6 @@ pub const MAX_POINTS: usize = 32;
 
 /// A discovered BACnet device entry.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct DeviceEntry {
     /// BACnet device instance number.
     pub device_id: u32,
@@ -41,7 +40,6 @@ impl DeviceEntry {
 
 /// A single point (object) in a device.
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct PointEntry {
     /// Object identifier.
     pub object_id: ObjectId,
@@ -53,7 +51,6 @@ pub struct PointEntry {
     pub dirty: bool,
 }
 
-#[allow(dead_code)]
 impl PointEntry {
     pub fn new(object_id: ObjectId) -> Self {
         Self {
@@ -75,7 +72,6 @@ pub struct BridgeStateInner {
     pub point_counts: [usize; MAX_DEVICES],
 }
 
-#[allow(dead_code)]
 impl BridgeStateInner {
     pub const fn new() -> Self {
         // We need const initialisation without Default impls — use manual zero init.
@@ -152,13 +148,11 @@ pub static BRIDGE_STATE: Mutex<CriticalSectionRawMutex, BridgeStateInner> =
     Mutex::new(BridgeStateInner::new());
 
 /// Helper: return device count without holding the lock long.
-#[allow(dead_code)]
 pub async fn device_count() -> usize {
     BRIDGE_STATE.lock().await.device_count
 }
 
 /// Helper: copy out device list.  Returns number of entries copied.
-#[allow(dead_code)]
 pub async fn snapshot_devices(out: &mut [DeviceEntry]) -> usize {
     let state = BRIDGE_STATE.lock().await;
     let n = state.device_count.min(out.len());

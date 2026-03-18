@@ -12,12 +12,12 @@ use bridge_core::ipc::RingBuffer;
 /// PDUs flowing from the MS/TP side (Core 1) to the BACnet/IP side (Core 0).
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub static mut mstp_to_ip_ring: RingBuffer<8> = RingBuffer::new();
+static mut mstp_to_ip_ring: RingBuffer<8> = RingBuffer::new();
 
 /// PDUs flowing from the BACnet/IP side (Core 0) to the MS/TP side (Core 1).
 #[no_mangle]
 #[allow(non_upper_case_globals)]
-pub static mut ip_to_mstp_ring: RingBuffer<8> = RingBuffer::new();
+static mut ip_to_mstp_ring: RingBuffer<8> = RingBuffer::new();
 
 /// Return a mutable reference to the MS/TP → IP ring buffer.
 ///

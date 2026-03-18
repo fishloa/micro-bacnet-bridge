@@ -117,7 +117,7 @@ async fn handle_connection(socket: &mut TcpSocket<'_>) {
         }
 
         // ---- OpenAPI spec ----
-        ("GET", "/api/openapi.json") => send_static_json(socket, OPENAPI_STUB).await,
+        ("GET", "/api/openapi.json") => send_json(socket, OPENAPI_STUB.as_bytes()).await,
 
         // ---- Fallthrough ----
         _ => send_404(socket).await,
@@ -277,7 +277,7 @@ async fn api_get_network_config(socket: &mut TcpSocket<'_>) {
         ),
     );
     drop(guard);
-    send_json_str(socket, body.as_str()).await;
+    send_json(socket, body.as_bytes()).await;
 }
 
 async fn api_get_bacnet_config(socket: &mut TcpSocket<'_>) {
@@ -303,7 +303,7 @@ async fn api_get_bacnet_config(socket: &mut TcpSocket<'_>) {
         ),
     );
     drop(guard);
-    send_json_str(socket, body.as_str()).await;
+    send_json(socket, body.as_bytes()).await;
 }
 
 async fn api_get_status(socket: &mut TcpSocket<'_>) {
@@ -317,11 +317,13 @@ async fn api_get_status(socket: &mut TcpSocket<'_>) {
     let _ = core::fmt::write(
         &mut body,
         format_args!(
-            "{{\"uptime\":{},\"deviceCount\":{},\"vendor\":\"Icomb Place\",\"firmware\":\"0.1.0\"}}",
-            uptime_s, device_count,
+            "{{\"uptime\":{},\"deviceCount\":{},\"vendor\":\"Icomb Place\",\"firmware\":\"{}\"}}",
+            uptime_s,
+            device_count,
+            env!("CARGO_PKG_VERSION"),
         ),
     );
-    send_json_str(socket, body.as_str()).await;
+    send_json(socket, body.as_bytes()).await;
 }
 
 async fn api_put_network_config(socket: &mut TcpSocket<'_>, body: &str) {
@@ -367,14 +369,6 @@ async fn send_json(socket: &mut TcpSocket<'_>, body: &[u8]) {
     let _ = socket.flush().await;
 }
 
-async fn send_json_str(socket: &mut TcpSocket<'_>, body: &str) {
-    send_json(socket, body.as_bytes()).await;
-}
-
-async fn send_static_json(socket: &mut TcpSocket<'_>, body: &str) {
-    send_json_str(socket, body).await;
-}
-
 async fn send_ok_empty(socket: &mut TcpSocket<'_>) {
     let _ = socket
         .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
@@ -400,12 +394,8 @@ async fn send_404(socket: &mut TcpSocket<'_>) {
 // Minimal OpenAPI stub (served at /api/openapi.json)
 // ---------------------------------------------------------------------------
 
-const OPENAPI_STUB: &str = r#"{
-  "openapi": "3.1.0",
-  "info": {
-    "title": "BACnet Bridge API",
-    "version": "0.1.0",
-    "contact": { "name": "Icomb Place" }
-  },
-  "paths": {}
-}"#;
+const OPENAPI_STUB: &str = concat!(
+    r#"{"openapi":"3.1.0","info":{"title":"BACnet Bridge API","version":""#,
+    env!("CARGO_PKG_VERSION"),
+    r#"","contact":{"name":"Icomb Place"}},"paths":{}}"#
+);

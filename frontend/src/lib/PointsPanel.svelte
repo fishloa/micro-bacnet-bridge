@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { filteredPoints, filterText, activeTab, tabs, points } from './stores';
-	import { OBJECT_TYPE_INFO, api } from './api';
+	import { OBJECT_TYPE_INFO, api, pointKey } from './api';
 	import type { BacnetPoint } from './api';
 
 	let editingPoint: BacnetPoint | null = $state(null);
@@ -13,7 +13,7 @@
 		const pts = $filteredPoints;
 		const newChanged = new Set<string>();
 		for (const p of pts) {
-			const key = `${p.objectType}:${p.objectInstance}`;
+			const key = pointKey(p);
 			const prev = prevValues.get(key);
 			if (prev !== undefined && prev !== p.presentValue) {
 				newChanged.add(key);
@@ -117,12 +117,12 @@
 					</tr>
 				</thead>
 				<tbody>
-					{#each $filteredPoints as point (`${point.objectType}:${point.objectInstance}`)}
+					{#each $filteredPoints as point (pointKey(point))}
 						<tr class="vui-transition">
 							<td><span class={badgeClass(point.objectType)}>{badgeLabel(point.objectType)}</span></td>
 							<td class="point-name">{point.objectName}</td>
 							<td class="text-sub text-sm">{point.description}</td>
-							<td class="point-value mono" class:value-changed={changedKeys.has(`${point.objectType}:${point.objectInstance}`)}>
+							<td class="point-value mono" class:value-changed={changedKeys.has(pointKey(point))}>
 								{#if editingPoint?.objectType === point.objectType && editingPoint?.objectInstance === point.objectInstance}
 									<form class="edit-form" onsubmit={(e) => { e.preventDefault(); submitEdit(); }}>
 										<input class="vui-input edit-input" bind:value={editValue} />

@@ -4,7 +4,7 @@
 //! 4 KiB sector of the 2 MiB flash. A magic number field provides validity
 //! detection; if the magic is absent the default config is returned.
 
-use bridge_core::config::{BridgeConfig, MAGIC};
+use bridge_core::config::BridgeConfig;
 use defmt::{error, info, warn};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
@@ -19,7 +19,6 @@ const SECTOR_SIZE: usize = 4096;
 const CONFIG_OFFSET: u32 = (FLASH_SIZE - SECTOR_SIZE) as u32;
 
 /// Scratch buffer for JSON encode/decode — fits inside the sector.
-#[allow(dead_code)]
 const JSON_BUF_SIZE: usize = SECTOR_SIZE;
 
 /// Thin wrapper that owns the flash peripheral and exposes load/save.
@@ -57,7 +56,7 @@ impl ConfigManager {
         }
 
         match serde_json_core::from_slice::<BridgeConfig>(&sector_buf[..json_end]) {
-            Ok((cfg, _)) if cfg.magic == MAGIC && cfg.validate() => {
+            Ok((cfg, _)) if cfg.validate() => {
                 info!(
                     "config: loaded from flash (device_id={})",
                     cfg.bacnet.device_id

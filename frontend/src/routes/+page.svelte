@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import PointsPanel from '$lib/PointsPanel.svelte';
-	import { api, connectSSE } from '$lib/api';
+	import { api, connectSSE, pointKey } from '$lib/api';
 	import { points } from '$lib/stores';
 
 	let disconnectSSE: (() => void) | null = null;
@@ -17,7 +17,7 @@
 		disconnectSSE = connectSSE((updates) => {
 			let changed = false;
 			const updated = $points.map(p => {
-				const key = `${p.objectType}:${p.objectInstance}`;
+				const key = pointKey(p);
 				if (key in updates) {
 					changed = true;
 					return { ...p, presentValue: updates[key] };

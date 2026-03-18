@@ -219,31 +219,28 @@ export const api = {
 		put(`/devices/${deviceId}/points/${objectType}:${objectInstance}`, { value }, { ok: true }),
 };
 
+export function pointKey(p: BacnetPoint): string {
+	return `${p.objectType}:${p.objectInstance}`;
+}
+
 // SSE client for live point value updates
 export function connectSSE(onUpdate: (updates: Record<string, number>) => void): () => void {
 	const url = '/api/events';
-	let es: EventSource | null = new EventSource(url);
+	let es: EventSource | null = null;
 
-	es.onmessage = (event) => {
-		try {
-			const updates = JSON.parse(event.data) as Record<string, number>;
-			onUpdate(updates);
-		} catch { /* ignore malformed */ }
-	};
+	function connect() {
+		es = new EventSource(url);
+		es.onmessage = (event) => {
+			try {
+				onUpdate(JSON.parse(event.data));
+			} catch { /* ignore malformed */ }
+		};
+		es.onerror = () => {
+			es?.close();
+			setTimeout(connect, 3000);
+		};
+	}
 
-	es.onerror = () => {
-		// Reconnect after 3s on error
-		es?.close();
-		setTimeout(() => {
-			es = new EventSource(url);
-			es.onmessage = (event) => {
-				try {
-					const updates = JSON.parse(event.data) as Record<string, number>;
-					onUpdate(updates);
-				} catch { /* ignore */ }
-			};
-		}, 3000);
-	};
-
+	connect();
 	return () => { es?.close(); es = null; };
 }

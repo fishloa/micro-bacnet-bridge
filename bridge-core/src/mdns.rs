@@ -261,15 +261,6 @@ fn read_u16(data: &[u8], pos: usize) -> u16 {
     ((data[pos] as u16) << 8) | (data[pos + 1] as u16)
 }
 
-#[allow(dead_code)]
-#[inline]
-fn read_u32(data: &[u8], pos: usize) -> u32 {
-    ((data[pos] as u32) << 24)
-        | ((data[pos + 1] as u32) << 16)
-        | ((data[pos + 2] as u32) << 8)
-        | (data[pos + 3] as u32)
-}
-
 // ---------------------------------------------------------------------------
 // Public encode functions
 // ---------------------------------------------------------------------------

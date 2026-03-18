@@ -122,3 +122,14 @@ a:hover {
 .gap-md {
 	gap: var(--vui-space-md);
 }
+
+.page-header {
+	display: flex;
+	align-items: center;
+	gap: var(--vui-space-md);
+	margin-bottom: var(--vui-space-lg);
+}
+.page-header h1 {
+	font-size: var(--vui-text-xl);
+	font-weight: var(--vui-font-bold);
+}

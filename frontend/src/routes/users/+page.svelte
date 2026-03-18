@@ -103,14 +103,7 @@
 		max-width: 640px;
 	}
 	.page-header {
-		display: flex;
-		align-items: center;
 		justify-content: space-between;
-		margin-bottom: var(--vui-space-lg);
-	}
-	.page-header h1 {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-bold);
 	}
 	.create-form {
 		display: flex;

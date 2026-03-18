@@ -49,7 +49,6 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
                         if !point.dirty {
                             continue;
                         }
-                        point.dirty = false;
 
                         // Build a minimal JSON event string
                         // {"deviceId":N,"objType":N,"instance":N,"value":...}
@@ -120,7 +119,10 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
                             ),
                             );
 
-                        let _ = events.push(event);
+                        // Only clear dirty after the event is successfully pushed
+                        if events.push(event).is_ok() {
+                            point.dirty = false;
+                        }
                         if events.is_full() {
                             break;
                         }

@@ -9,7 +9,8 @@
 	let bacnet: BacnetConfig = $state({
 		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 9600, maxMaster: 127
 	});
-	let saving = $state(false);
+	let savingNetwork = $state(false);
+	let savingBacnet = $state(false);
 	let savedMsg = $state('');
 
 	onMount(async () => {
@@ -18,18 +19,18 @@
 	});
 
 	async function saveNetwork() {
-		saving = true;
+		savingNetwork = true;
 		await api.setNetworkConfig(net);
 		savedMsg = 'Network config saved';
-		saving = false;
+		savingNetwork = false;
 		setTimeout(() => savedMsg = '', 3000);
 	}
 
 	async function saveBacnet() {
-		saving = true;
+		savingBacnet = true;
 		await api.setBacnetConfig(bacnet);
 		savedMsg = 'BACnet config saved';
-		saving = false;
+		savingBacnet = false;
 		setTimeout(() => savedMsg = '', 3000);
 	}
 </script>
@@ -82,8 +83,8 @@
 				</tbody>
 			</table>
 			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={saving}>
-					{saving ? 'Saving...' : 'Save Network'}
+				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork}>
+					{savingNetwork ? 'Saving...' : 'Save Network'}
 				</button>
 			</div>
 		</div>
@@ -126,8 +127,8 @@
 				</tbody>
 			</table>
 			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={saving}>
-					{saving ? 'Saving...' : 'Save BACnet'}
+				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet}>
+					{savingBacnet ? 'Saving...' : 'Save BACnet'}
 				</button>
 			</div>
 		</div>
@@ -139,16 +140,6 @@
 		padding: var(--vui-space-lg);
 		height: 100%;
 		overflow-y: auto;
-	}
-	.page-header {
-		display: flex;
-		align-items: center;
-		gap: var(--vui-space-md);
-		margin-bottom: var(--vui-space-lg);
-	}
-	.page-header h1 {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-bold);
 	}
 	.config-grid {
 		display: grid;

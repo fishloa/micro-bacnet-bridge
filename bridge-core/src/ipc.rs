@@ -21,7 +21,7 @@ pub const PDU_MAX_DATA: usize = 480;
 /// A BACnet PDU passed between Core 0 and Core 1 via the shared ring buffer.
 ///
 /// `repr(C)` is required so the C code on Core 1 can access the same struct.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct BacnetPdu {
     /// Source network number (0 = local MS/TP segment).
@@ -104,13 +104,17 @@ impl Default for BacnetPdu {
 /// `N` must be a power of two for the index-masking optimisation to work,
 /// though this is not enforced at compile time — callers should choose powers
 /// of two (e.g. 4, 8, 16).
+///
+/// `repr(C)` ensures the field layout matches the C `ipc_ring_t`:
+/// `head` (u32), `tail` (u32), `buffer` ([bacnet_pdu_t; N])`.
+#[repr(C)]
 pub struct RingBuffer<const N: usize> {
+    /// Write index (producer increments). Volatile access required.
+    head: u32,
+    /// Read index (consumer increments). Volatile access required.
+    tail: u32,
     /// Storage for PDUs.
     data: [BacnetPdu; N],
-    /// Write index (producer increments). Volatile access required.
-    head: usize,
-    /// Read index (consumer increments). Volatile access required.
-    tail: usize,
 }
 
 impl<const N: usize> RingBuffer<N> {
@@ -118,24 +122,11 @@ impl<const N: usize> RingBuffer<N> {
     const _CHECK: () = assert!(N > 0, "RingBuffer size N must be > 0");
 
     /// Create an empty ring buffer.
-    ///
-    /// # Safety
-    ///
-    /// This uses `MaybeUninit` idiomatically via `const fn new()` — all PDU
-    /// slots are zero-initialised.
     pub const fn new() -> Self {
-        // We can't use array initializer [BacnetPdu::new(); N] in const context
-        // for non-Copy types (Clone only), so we use a manual approach.
-        // BacnetPdu contains only primitive types so it is Copy-compatible,
-        // but we derive Clone not Copy to keep the type simple. We rely on
-        // transmute-like zero init.
-        //
-        // SAFETY: BacnetPdu is repr(C) with only primitive fields; all-zeros
-        // is a valid representation.
         Self {
-            data: unsafe { core::mem::zeroed() },
             head: 0,
             tail: 0,
+            data: [BacnetPdu::new(); N],
         }
     }
 
@@ -153,7 +144,7 @@ impl<const N: usize> RingBuffer<N> {
     pub fn is_full(&self) -> bool {
         let h = unsafe { read_volatile(&self.head) };
         let t = unsafe { read_volatile(&self.tail) };
-        (h.wrapping_add(1)) % N == t
+        (h.wrapping_add(1)) & (N as u32 - 1) == t
     }
 
     /// Push a PDU into the buffer (producer side).
@@ -162,11 +153,11 @@ impl<const N: usize> RingBuffer<N> {
     pub fn push(&mut self, pdu: &BacnetPdu) -> bool {
         let h = unsafe { read_volatile(&self.head) };
         let t = unsafe { read_volatile(&self.tail) };
-        let next_h = (h.wrapping_add(1)) % N;
+        let next_h = h.wrapping_add(1) & (N as u32 - 1);
         if next_h == t {
             return false; // full
         }
-        self.data[h] = pdu.clone();
+        self.data[h as usize] = *pdu;
         // Write head last (release semantics via volatile write)
         unsafe { write_volatile(&mut self.head, next_h) };
         true
@@ -181,8 +172,8 @@ impl<const N: usize> RingBuffer<N> {
         if h == t {
             return None; // empty
         }
-        let pdu = self.data[t].clone();
-        let next_t = (t.wrapping_add(1)) % N;
+        let pdu = self.data[t as usize];
+        let next_t = t.wrapping_add(1) & (N as u32 - 1);
         // Advance tail last (release semantics via volatile write)
         unsafe { write_volatile(&mut self.tail, next_t) };
         Some(pdu)
@@ -190,8 +181,8 @@ impl<const N: usize> RingBuffer<N> {
 
     /// Return the number of items currently in the buffer.
     pub fn len(&self) -> usize {
-        let h = unsafe { read_volatile(&self.head) };
-        let t = unsafe { read_volatile(&self.tail) };
+        let h = unsafe { read_volatile(&self.head) } as usize;
+        let t = unsafe { read_volatile(&self.tail) } as usize;
         if h >= t {
             h - t
         } else {
