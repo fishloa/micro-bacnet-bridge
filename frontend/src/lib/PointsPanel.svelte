@@ -3,6 +3,9 @@
 	import { OBJECT_TYPE_INFO, api, pointKey } from './api';
 	import type { BacnetPoint } from './api';
 
+	/** When true, show a "Device" column (used in the "All Devices" view). */
+	let { showDeviceColumn = false }: { showDeviceColumn?: boolean } = $props();
+
 	let editingPoint: BacnetPoint | null = $state(null);
 	let editValue: string = $state('');
 	let changedKeys: Set<string> = $state(new Set());
@@ -116,6 +119,9 @@
 				<thead>
 					<tr>
 						<th style="width: 52px">Type</th>
+						{#if showDeviceColumn}
+							<th style="width: 80px">Device</th>
+						{/if}
 						<th>Name</th>
 						<th>Description</th>
 						<th style="width: 140px">Value</th>
@@ -126,6 +132,9 @@
 					{#each $filteredPoints as point (pointKey(point))}
 						<tr class="vui-transition">
 							<td><span class={badgeClass(point.objectType)}>{badgeLabel(point.objectType)}</span></td>
+							{#if showDeviceColumn}
+								<td class="text-sub text-sm mono">{(point as BacnetPoint & { _deviceId?: number })._deviceId ?? $deviceId}</td>
+							{/if}
 							<td class="point-name">{point.objectName}</td>
 							<td class="text-sub text-sm">{point.description}</td>
 							<td class="point-value mono" class:value-changed={changedKeys.has(pointKey(point))}>

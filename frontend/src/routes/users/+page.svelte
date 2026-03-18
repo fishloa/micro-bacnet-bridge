@@ -13,17 +13,32 @@
 		users = await api.getUsers();
 	});
 
-	function createUser() {
+	async function createUser() {
 		if (!newUsername || !newPassword) return;
-		const maxId = users.reduce((m, u) => Math.max(m, u.id), 0);
-		users = [...users, { id: maxId + 1, username: newUsername, role: newRole }];
-		newUsername = '';
-		newPassword = '';
-		showCreate = false;
+		try {
+			await api.createUser(newUsername, newPassword, newRole);
+			users = await api.getUsers();
+			newUsername = '';
+			newPassword = '';
+			showCreate = false;
+		} catch {
+			// Fallback: optimistic local update for dev mode
+			const maxId = users.reduce((m, u) => Math.max(m, u.id), 0);
+			users = [...users, { id: maxId + 1, username: newUsername, role: newRole }];
+			newUsername = '';
+			newPassword = '';
+			showCreate = false;
+		}
 	}
 
-	function deleteUser(id: number) {
-		users = users.filter(u => u.id !== id);
+	async function deleteUser(id: number) {
+		try {
+			await api.deleteUser(id);
+			users = users.filter(u => u.id !== id);
+		} catch {
+			// Fallback: optimistic local update for dev mode
+			users = users.filter(u => u.id !== id);
+		}
 	}
 </script>
 

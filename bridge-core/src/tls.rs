@@ -272,16 +272,18 @@ mod tests {
     // For simplicity we use a snippet that contains the OID + UTF8String value
     // and wrap it in a fake PEM block.
 
+    // FAKE test data — base64 of "this is not a real certificate" etc.
+    // NOT real crypto material. Used only for PEM label parsing tests.
     const TEST_CERT_PEM: &[u8] = b"-----BEGIN CERTIFICATE-----\n\
-        MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2a2rwplBQLF29amygykE\n\
+        dGhpcyBpcyBub3QgYSByZWFsIGNlcnRpZmljYXRl\n\
         -----END CERTIFICATE-----\n";
 
     const TEST_KEY_PEM: &[u8] = b"-----BEGIN EC PRIVATE KEY-----\n\
-        MHQCAQEEIOaLsaBOGsVLLEqvjkFH0sNuFCIgDYkH9CZprdQxVFBBoAoGCCqGSM49\n\
+        dGhpcyBpcyBub3QgYSByZWFsIGtleQ==\n\
         -----END EC PRIVATE KEY-----\n";
 
     const PKCS8_KEY_PEM: &[u8] = b"-----BEGIN PRIVATE KEY-----\n\
-        MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgKXcpX2slCPCuvQJV\n\
+        dGhpcyBpcyBhbHNvIG5vdCBhIHJlYWwga2V5\n\
         -----END PRIVATE KEY-----\n";
 
     // -----------------------------------------------------------------------

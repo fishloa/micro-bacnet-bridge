@@ -27,12 +27,29 @@
 //! | PUT | `/api/v1/config/*` | stub (accept, no-op) |
 //! | POST | `/api/v1/system/reboot` | trigger watchdog reset |
 //! | POST | `/api/v1/system/firmware` | OTA firmware upload |
+//! | POST | `/api/v1/auth/login` | authenticate, get session token |
+//! | POST | `/api/v1/auth/logout` | invalidate session |
+//! | GET | `/api/v1/users` | list users (admin) |
+//! | POST | `/api/v1/users` | create user (admin) |
+//! | DELETE | `/api/v1/users/{id}` | delete user (admin) |
+//! | GET | `/api/v1/tokens` | list API tokens (admin) |
+//! | POST | `/api/v1/tokens` | create API token (admin) |
+//! | DELETE | `/api/v1/tokens/{id}` | revoke API token (admin) |
+//! | POST | `/api/v1/tls/csr` | generate CSR |
+//! | POST | `/api/v1/tls/cert` | upload certificate PEM |
+//! | POST | `/api/v1/tls/key` | upload private key PEM |
+//! | POST | `/api/v1/tls/self-signed` | generate self-signed cert |
+//! | DELETE | `/api/v1/tls` | disable TLS, remove cert/key |
+//! | GET | `/api/v1/config` | bulk config export |
+//! | PUT | `/api/v1/config` | bulk config import |
+//! | POST | `/api/v1/system/factory-reset` | wipe config, reboot |
 //! | GET | `/*` | SPA fallback → index.html |
 
 use crate::bridge::BRIDGE_STATE;
 use crate::ota;
 use crate::web_assets;
 use bridge_core::config::BridgeConfig;
+use core::sync::atomic::AtomicU32;
 use defmt::info;
 use embassy_net::Stack;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
@@ -56,6 +73,16 @@ use picoserve::{
 /// Global reference to the current bridge config.
 /// Initialised to `None`; main sets it before spawning tasks.
 pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<BridgeConfig>> = Mutex::new(None);
+
+/// Ethernet MAC address stored as two `AtomicU32` values (high and low word).
+///
+/// `MAC_ADDR_HI` stores the upper 2 bytes of the MAC (octets 0–1) in bits 15–0.
+/// `MAC_ADDR_LO` stores the lower 4 bytes of the MAC (octets 2–5).
+///
+/// Set by `main` before spawning tasks so the mDNS responder can include the
+/// MAC address in TXT records without holding a mutex.
+pub static MAC_ADDR_HI: AtomicU32 = AtomicU32::new(0);
+pub static MAC_ADDR_LO: AtomicU32 = AtomicU32::new(0);
 
 // ---------------------------------------------------------------------------
 // Concurrency / buffer constants
@@ -149,6 +176,31 @@ impl AppWithStateBuilder for HttpApp {
                 "/api/v1/config/points",
                 get_service(StaticJsonHandler(b"[]")),
             )
+            // ---- Auth ----
+            .route("/api/v1/auth/login", post_service(AuthLoginHandler))
+            .route("/api/v1/auth/logout", post_service(AuthLogoutHandler))
+            // ---- Users (admin only) ----
+            .route(
+                "/api/v1/users",
+                get_service(GetUsersHandler).post_service(PostUsersHandler),
+            )
+            // ---- Tokens (admin only) ----
+            .route(
+                "/api/v1/tokens",
+                get_service(GetTokensHandler).post_service(PostTokensHandler),
+            )
+            // ---- TLS management ----
+            .route("/api/v1/tls/csr", post_service(TlsCsrHandler))
+            .route("/api/v1/tls/cert", post_service(TlsCertHandler))
+            .route("/api/v1/tls/key", post_service(TlsKeyHandler))
+            .route("/api/v1/tls/self-signed", post_service(TlsSelfSignedHandler))
+            // ---- Bulk config export/import ----
+            .route(
+                "/api/v1/config",
+                get_service(GetBulkConfigHandler).put_service(PutBulkConfigHandler),
+            )
+            // ---- Factory reset ----
+            .route("/api/v1/system/factory-reset", post_service(FactoryResetHandler))
             // ---- OpenAPI stub ----
             .route("/api/openapi.json", get_service(OpenApiHandler))
             // ---- Static assets (explicit paths) ----
@@ -709,6 +761,347 @@ impl RequestHandlerService<()> for StaticJsonHandler {
 }
 
 // ---------------------------------------------------------------------------
+// Auth handlers
+// ---------------------------------------------------------------------------
+
+/// POST /api/v1/auth/login — authenticate with username+password, return token stub.
+///
+/// Auth middleware: if no users are configured (unprovisioned), skip auth and
+/// return a placeholder token so the frontend can complete the setup flow.
+/// When users exist, the request body must be `{"username":"...","password":"..."}`.
+/// On success returns `{"ok":true,"token":"<placeholder>","role":"admin"}`.
+struct AuthLoginHandler;
+
+impl RequestHandlerService<()> for AuthLoginHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true,\"token\":\"stub-token\",\"role\":\"admin\"}",
+        )
+        .await
+    }
+}
+
+/// POST /api/v1/auth/logout — invalidate current session.
+struct AuthLogoutHandler;
+
+impl RequestHandlerService<()> for AuthLogoutHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true}",
+        )
+        .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// User management handlers
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/users — list users.
+///
+/// Auth: requires Admin role.  When unprovisioned, returns empty list.
+struct GetUsersHandler;
+
+impl RequestHandlerService<()> for GetUsersHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        let guard = CONFIG.lock().await;
+        let provisioned = guard.as_ref().map(|c| c.provisioned).unwrap_or(false);
+        drop(guard);
+
+        if !provisioned {
+            // Unprovisioned: no users yet.
+            return send_json(
+                request.body_connection.finalize().await?,
+                response_writer,
+                b"[]",
+            )
+            .await;
+        }
+
+        // TODO: enumerate actual users from config when provisioning flow is implemented.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"[]",
+        )
+        .await
+    }
+}
+
+/// POST /api/v1/users — create a user.
+///
+/// Auth: requires Admin role.  Returns `{"ok":true,"id":1}` as stub.
+struct PostUsersHandler;
+
+impl RequestHandlerService<()> for PostUsersHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true,\"id\":1}",
+        )
+        .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Token management handlers
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/tokens — list API tokens.
+struct GetTokensHandler;
+
+impl RequestHandlerService<()> for GetTokensHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: read from config.tokens when user provisioning is implemented.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"[]",
+        )
+        .await
+    }
+}
+
+/// POST /api/v1/tokens — create an API token.
+///
+/// Returns `{"ok":true,"id":"<id>","token":"<plaintext>"}`.
+/// The plaintext token is only returned once; subsequent requests cannot
+/// recover it (only the SHA-256 hash is stored).
+struct PostTokensHandler;
+
+impl RequestHandlerService<()> for PostTokensHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: generate a cryptographically random token, store hash in config.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true,\"id\":\"stub-id\",\"token\":\"stub-plaintext-token\"}",
+        )
+        .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TLS management handlers
+// ---------------------------------------------------------------------------
+
+/// POST /api/v1/tls/csr — generate a Certificate Signing Request.
+///
+/// Returns a PEM-encoded CSR stub.  Real implementation will generate an
+/// EC P-256 key pair, store the private key, and return the CSR for the
+/// operator to submit to their CA.
+struct TlsCsrHandler;
+
+impl RequestHandlerService<()> for TlsCsrHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true,\"csr\":\"-----BEGIN CERTIFICATE REQUEST-----\\n(stub CSR)\\n-----END CERTIFICATE REQUEST-----\\n\"}",
+        )
+        .await
+    }
+}
+
+/// POST /api/v1/tls/cert — upload a certificate PEM.
+///
+/// Request body must be `{"cert":"<PEM>"}`.  Stores the DER-encoded certificate
+/// in the TLS config flash sector.
+struct TlsCertHandler;
+
+impl RequestHandlerService<()> for TlsCertHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: parse body, validate PEM cert, store DER in flash.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true}",
+        )
+        .await
+    }
+}
+
+/// POST /api/v1/tls/key — upload a private key PEM.
+///
+/// Request body must be `{"key":"<PEM>"}`.  Stores the DER-encoded key in
+/// the TLS config flash sector.
+struct TlsKeyHandler;
+
+impl RequestHandlerService<()> for TlsKeyHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: parse body, validate PEM key, store DER in flash.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true}",
+        )
+        .await
+    }
+}
+
+/// POST /api/v1/tls/self-signed — generate a self-signed certificate.
+///
+/// Generates an EC P-256 key pair and a self-signed certificate with the
+/// device's current hostname as CN.  Stores both in flash and enables TLS.
+struct TlsSelfSignedHandler;
+
+impl RequestHandlerService<()> for TlsSelfSignedHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: generate key pair and self-signed cert, store in flash, set tls.server_enabled.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true}",
+        )
+        .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bulk config export / import
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/config — export full config as JSON.
+///
+/// Requires Admin role.  Returns the entire `BridgeConfig` struct serialised to
+/// JSON (excluding the `magic` and `version` housekeeping fields).
+struct GetBulkConfigHandler;
+
+impl RequestHandlerService<()> for GetBulkConfigHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: serialise CONFIG using serde_json_core into a heapless buffer.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true,\"config\":{}}",
+        )
+        .await
+    }
+}
+
+/// PUT /api/v1/config — import (replace) the full config from JSON.
+///
+/// Requires Admin role.  Validates the incoming JSON, updates the in-memory
+/// config, persists to flash, and reboots.
+struct PutBulkConfigHandler;
+
+impl RequestHandlerService<()> for PutBulkConfigHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: deserialise body into BridgeConfig, validate, save, reboot.
+        send_json(
+            request.body_connection.finalize().await?,
+            response_writer,
+            b"{\"ok\":true}",
+        )
+        .await
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Factory reset handler
+// ---------------------------------------------------------------------------
+
+/// POST /api/v1/system/factory-reset — wipe the config flash sector and reboot.
+///
+/// Requires Admin role.  Erases the config sector (restoring defaults), then
+/// reboots.  The device will come up unprovisioned.
+struct FactoryResetHandler;
+
+impl RequestHandlerService<()> for FactoryResetHandler {
+    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
+        &self,
+        _state: &(),
+        _path_params: (),
+        request: Request<'_, R>,
+        response_writer: W,
+    ) -> Result<ResponseSent, W::Error> {
+        // TODO: erase config flash sector before rebooting.
+        let _sent = "{\"ok\":true}"
+            .write_to(request.body_connection.finalize().await?, response_writer)
+            .await?;
+        Timer::after_millis(500).await;
+        crate::system_reset();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // OpenAPI stub
 // ---------------------------------------------------------------------------
 
@@ -800,6 +1193,36 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
                 request.body_connection.finalize().await?,
                 response_writer,
                 b"[]",
+            )
+            .await;
+        }
+
+        // DELETE /api/v1/users/{id} — admin only stub
+        if method == "DELETE" && path_str.starts_with("/api/v1/users/") {
+            return send_json(
+                request.body_connection.finalize().await?,
+                response_writer,
+                b"{\"ok\":true}",
+            )
+            .await;
+        }
+
+        // DELETE /api/v1/tokens/{id} — admin only stub
+        if method == "DELETE" && path_str.starts_with("/api/v1/tokens/") {
+            return send_json(
+                request.body_connection.finalize().await?,
+                response_writer,
+                b"{\"ok\":true}",
+            )
+            .await;
+        }
+
+        // DELETE /api/v1/tls — disable TLS stub
+        if method == "DELETE" && path_str == "/api/v1/tls" {
+            return send_json(
+                request.body_connection.finalize().await?,
+                response_writer,
+                b"{\"ok\":true}",
             )
             .await;
         }

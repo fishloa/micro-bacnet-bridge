@@ -58,7 +58,45 @@ export interface SystemStatus {
 export interface User {
 	id: number;
 	username: string;
-	role: 'admin' | 'viewer';
+	role: 'admin' | 'operator' | 'viewer';
+}
+
+export interface ApiToken {
+	id: string;
+	name: string;
+	role: 'admin' | 'operator' | 'viewer';
+	createdBy: string;
+}
+
+export interface TlsStatus {
+	enabled: boolean;
+	subject: string;
+	expiry: string;
+}
+
+export interface OtaConfig {
+	auto_update: boolean;
+	manifest_url: string;
+	channel: string;
+	check_interval_secs: number;
+}
+
+export interface OtaUpdateInfo {
+	available: boolean;
+	version?: string;
+	releaseNotes?: string;
+}
+
+export interface AuthResult {
+	ok: boolean;
+	token?: string;
+	role?: string;
+}
+
+export interface CreateTokenResult {
+	ok: boolean;
+	id?: string;
+	token?: string;
 }
 
 export interface NtpConfig {
@@ -275,6 +313,17 @@ const MOCK_USERS: User[] = [
 	{ id: 2, username: 'operator', role: 'viewer' },
 ];
 
+const MOCK_TOKENS: ApiToken[] = [
+	{ id: 'tok-1', name: 'CI/CD pipeline', role: 'operator', createdBy: 'admin' },
+	{ id: 'tok-2', name: 'Monitoring', role: 'viewer', createdBy: 'admin' },
+];
+
+const MOCK_TLS_STATUS: TlsStatus = {
+	enabled: false,
+	subject: '',
+	expiry: '',
+};
+
 const MOCK_NTP_CONFIG: NtpConfig = {
 	enabled: true,
 	use_dhcp_servers: true,
@@ -334,12 +383,21 @@ const MOCK_POINT_CONFIGS: PointConfig[] = MOCK_POINTS[100].map(p => {
 import { dev } from '$app/environment';
 const IS_DEV = dev;
 
+/** Build auth headers from localStorage token (if present). */
+function authHeaders(): Record<string, string> {
+	const token = typeof localStorage !== 'undefined' ? localStorage.getItem('auth_token') : null;
+	return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function get<T>(path: string, mock: T): Promise<T> {
 	if (IS_DEV) return mock;
 	const controller = new AbortController();
 	const timer = setTimeout(() => controller.abort(), 8000);
 	try {
-		const res = await fetch(`/api/v1${path}`, { signal: controller.signal });
+		const res = await fetch(`/api/v1${path}`, {
+			signal: controller.signal,
+			headers: { ...authHeaders() },
+		});
 		if (!res.ok) throw new Error(`API error: ${res.status}`);
 		return res.json();
 	} finally {
@@ -354,8 +412,43 @@ async function put<T>(path: string, body: unknown, mock: T): Promise<T> {
 	try {
 		const res = await fetch(`/api/v1${path}`, {
 			method: 'PUT',
-			headers: { 'Content-Type': 'application/json' },
+			headers: { 'Content-Type': 'application/json', ...authHeaders() },
 			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		if (!res.ok) throw new Error(`API error: ${res.status}`);
+		return res.json();
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function post<T>(path: string, body: unknown, mock: T): Promise<T> {
+	if (IS_DEV) return mock;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 8000);
+	try {
+		const res = await fetch(`/api/v1${path}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json', ...authHeaders() },
+			body: JSON.stringify(body),
+			signal: controller.signal,
+		});
+		if (!res.ok) throw new Error(`API error: ${res.status}`);
+		return res.json();
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+async function del<T>(path: string, mock: T): Promise<T> {
+	if (IS_DEV) return mock;
+	const controller = new AbortController();
+	const timer = setTimeout(() => controller.abort(), 8000);
+	try {
+		const res = await fetch(`/api/v1${path}`, {
+			method: 'DELETE',
+			headers: { ...authHeaders() },
 			signal: controller.signal,
 		});
 		if (!res.ok) throw new Error(`API error: ${res.status}`);
@@ -374,6 +467,10 @@ export const api = {
 	setBacnetConfig: (cfg: BacnetConfig) => put('/config/bacnet', cfg, cfg),
 	getStatus: () => get('/system/status', MOCK_STATUS),
 	getUsers: () => get('/users', MOCK_USERS),
+	createUser: (username: string, password: string, role: string) =>
+		post('/users', { username, password, role }, { ok: true, id: 1 }),
+	deleteUser: (id: number) =>
+		del(`/users/${id}`, { ok: true }),
 	writePoint: (deviceId: number, objectType: string, objectInstance: number, value: string | number | boolean) =>
 		put(`/devices/${deviceId}/points/${objectType}:${objectInstance}`, { value }, { ok: true }),
 	getNtpConfig: () => get('/config/ntp', MOCK_NTP_CONFIG),
@@ -389,6 +486,51 @@ export const api = {
 		put(`/config/points/${objectType}:${objectInstance}`, cfg, cfg),
 	setPointConfigs: (configs: PointConfig[]) =>
 		put('/config/points', configs, configs),
+
+	// ---- Auth ----
+	login: (username: string, password: string): Promise<AuthResult> =>
+		post('/auth/login', { username, password }, { ok: true, token: 'dev-token', role: 'admin' } as AuthResult),
+	logout: () =>
+		post('/auth/logout', {}, { ok: true }),
+
+	// ---- Tokens ----
+	getTokens: () => get('/tokens', MOCK_TOKENS),
+	createToken: (name: string, role: string): Promise<CreateTokenResult> =>
+		post('/tokens', { name, role }, { ok: true, id: 'new-id', token: 'new-plaintext-token' } as CreateTokenResult),
+	revokeToken: (id: string) =>
+		del(`/tokens/${id}`, { ok: true }),
+
+	// ---- TLS ----
+	getTlsStatus: () => get('/tls', MOCK_TLS_STATUS),
+	tlsCsr: (): Promise<{ ok: boolean; csr: string }> =>
+		post('/tls/csr', {}, { ok: true, csr: '-----BEGIN CERTIFICATE REQUEST-----\n(dev stub CSR)\n-----END CERTIFICATE REQUEST-----\n' }),
+	tlsUploadCert: (certPem: string) =>
+		post('/tls/cert', { cert: certPem }, { ok: true }),
+	tlsUploadKey: (keyPem: string) =>
+		post('/tls/key', { key: keyPem }, { ok: true }),
+	tlsSelfSigned: () =>
+		post('/tls/self-signed', {}, { ok: true }),
+	tlsDisable: () =>
+		del('/tls', { ok: true }),
+
+	// ---- Bulk config ----
+	getBulkConfig: () =>
+		get('/config', { ok: true, config: {} }),
+	setBulkConfig: (config: unknown) =>
+		put('/config', config, { ok: true }),
+	factoryReset: () =>
+		post('/system/factory-reset', {}, { ok: true }),
+
+	// ---- OTA ----
+	getOtaConfig: () => get('/config/ota', {
+		auto_update: false,
+		manifest_url: '',
+		channel: 'release',
+		check_interval_secs: 3600,
+	} as OtaConfig),
+	setOtaConfig: (cfg: OtaConfig) => put('/config/ota', cfg, cfg),
+	checkOtaUpdate: (): Promise<OtaUpdateInfo> =>
+		post('/system/ota/check', {}, { available: false } as OtaUpdateInfo),
 };
 
 export function pointKey(p: BacnetPoint): string {
@@ -406,7 +548,9 @@ export function isNumericType(objectType: string): boolean {
 	);
 }
 
-// SSE client for live point value updates
+// SSE client for live point value updates.
+// SSE event data format: {"deviceId":<n>,"objType":<n>,"instance":<n>,"value":<v>}
+// The update map key is `{deviceId}:{objectType}:{objectInstance}`.
 export function connectSSE(onUpdate: (updates: Record<string, number>) => void): () => void {
 	const url = '/api/events';
 	let es: EventSource | null = null;

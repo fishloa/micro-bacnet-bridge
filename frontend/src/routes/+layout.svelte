@@ -9,6 +9,9 @@
 		{ href: '/config', icon: '⚙', label: 'Config' },
 		{ href: '/points', icon: '⊡', label: 'Points' },
 		{ href: '/users', icon: '⊕', label: 'Users' },
+		{ href: '/tokens', icon: '⊗', label: 'Tokens' },
+		{ href: '/tls', icon: '⊘', label: 'TLS' },
+		{ href: '/firmware', icon: '⊙', label: 'Firmware' },
 	];
 </script>
 

@@ -107,6 +107,18 @@ async fn main(spawner: Spawner) {
         bridge_config.hostname.as_str()
     );
 
+    // Publish MAC address so the mDNS task can include it in TXT records without
+    // holding a mutex.  Store as two AtomicU32: HI = bytes 0–1, LO = bytes 2–5.
+    {
+        let hi: u32 = ((mac_addr[0] as u32) << 8) | (mac_addr[1] as u32);
+        let lo: u32 = ((mac_addr[2] as u32) << 24)
+            | ((mac_addr[3] as u32) << 16)
+            | ((mac_addr[4] as u32) << 8)
+            | (mac_addr[5] as u32);
+        http::MAC_ADDR_HI.store(hi, core::sync::atomic::Ordering::Relaxed);
+        http::MAC_ADDR_LO.store(lo, core::sync::atomic::Ordering::Relaxed);
+    }
+
     // Hand flash to OTA subsystem
     {
         let mut flash_guard = ota::FLASH.lock().await;
