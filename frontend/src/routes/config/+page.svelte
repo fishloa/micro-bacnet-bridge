@@ -43,6 +43,30 @@
 	let savedMsg = $state('');
 	let loaded = $state(false);
 
+	// Snapshots for dirty detection — JSON stringified on load and after save
+	let snapNet = '';
+	let snapBacnet = '';
+	let snapNtp = '';
+	let snapSyslog = '';
+	let snapMqtt = '';
+	let snapSnmp = '';
+
+	function snap() {
+		snapNet = JSON.stringify(net);
+		snapBacnet = JSON.stringify(bacnet);
+		snapNtp = JSON.stringify(ntp);
+		snapSyslog = JSON.stringify(syslog);
+		snapMqtt = JSON.stringify(mqtt);
+		snapSnmp = JSON.stringify(snmp);
+	}
+
+	let dirtyNet = $derived(loaded && JSON.stringify(net) !== snapNet);
+	let dirtyBacnet = $derived(loaded && JSON.stringify(bacnet) !== snapBacnet);
+	let dirtyNtp = $derived(loaded && JSON.stringify(ntp) !== snapNtp);
+	let dirtySyslog = $derived(loaded && JSON.stringify(syslog) !== snapSyslog);
+	let dirtyMqtt = $derived(loaded && JSON.stringify(mqtt) !== snapMqtt);
+	let dirtySnmp = $derived(loaded && JSON.stringify(snmp) !== snapSnmp);
+
 	onMount(async () => {
 		[net, bacnet, ntp, syslog, mqtt, snmp] = await Promise.all([
 			api.getNetworkConfig(),
@@ -55,6 +79,7 @@
 		// Pad NTP servers array to length 3 for the UI
 		while (ntp.servers.length < 3) ntp.servers = [...ntp.servers, ''];
 		loaded = true;
+		snap();
 		updateExposure();
 	});
 
@@ -67,6 +92,7 @@
 		savingNetwork = true;
 		try {
 			await api.setNetworkConfig(net);
+			snapNet = JSON.stringify(net);
 			showMsg('Network config saved');
 		} catch {
 			showMsg('Failed to save network config');
@@ -79,6 +105,7 @@
 		savingBacnet = true;
 		try {
 			await api.setBacnetConfig(bacnet);
+			snapBacnet = JSON.stringify(bacnet);
 			updateExposure();
 			showMsg('BACnet config saved');
 		} catch {
@@ -94,6 +121,7 @@
 			// Strip empty server entries before saving
 			const cfg: NtpConfig = { ...ntp, servers: ntp.servers.filter(s => s.trim() !== '') };
 			await api.setNtpConfig(cfg);
+			snapNtp = JSON.stringify(ntp);
 			showMsg('NTP config saved');
 		} catch {
 			showMsg('Failed to save NTP config');
@@ -106,6 +134,7 @@
 		savingSyslog = true;
 		try {
 			await api.setSyslogConfig(syslog);
+			snapSyslog = JSON.stringify(syslog);
 			showMsg('Syslog config saved');
 		} catch {
 			showMsg('Failed to save Syslog config');
@@ -118,6 +147,7 @@
 		savingMqtt = true;
 		try {
 			await api.setMqttConfig(mqtt);
+			snapMqtt = JSON.stringify(mqtt);
 			updateExposure();
 			showMsg('MQTT config saved');
 		} catch {
@@ -131,6 +161,7 @@
 		savingSnmp = true;
 		try {
 			await api.setSnmpConfig(snmp);
+			snapSnmp = JSON.stringify(snmp);
 			showMsg('SNMP config saved');
 		} catch {
 			showMsg('Failed to save SNMP config');
@@ -166,7 +197,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">Network</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork || !loaded || !dirtyNet}>
 					{savingNetwork ? 'Saving...' : 'Save'}
 				</button>
 			</div>
@@ -206,7 +237,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">BACnet / MS/TP</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded || !dirtyBacnet}>
 					{savingBacnet ? 'Saving...' : 'Save'}
 				</button>
 			</div>
@@ -251,7 +282,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">NTP / Time Sync</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveNtp} disabled={savingNtp || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveNtp} disabled={savingNtp || !loaded || !dirtyNtp}>
 					{savingNtp ? 'Saving...' : 'Save'}
 				</button>
 			</div>
@@ -301,7 +332,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">BACnet/IP</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded || !dirtyBacnet}>
 					{savingBacnet ? 'Saving...' : 'Save'}
 				</button>
 			</div>
@@ -319,7 +350,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">MQTT</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveMqtt} disabled={savingMqtt || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveMqtt} disabled={savingMqtt || !loaded || !dirtyMqtt}>
 					{savingMqtt ? 'Saving...' : 'Save'}
 				</button>
 			</div>
@@ -392,7 +423,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">Syslog</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveSyslog} disabled={savingSyslog || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveSyslog} disabled={savingSyslog || !loaded || !dirtySyslog}>
 					{savingSyslog ? 'Saving...' : 'Save'}
 				</button>
 			</div>
@@ -420,7 +451,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="card-title-row">
 				<div class="vui-section-header">SNMP</div>
-				<button class="vui-btn vui-btn-primary" onclick={saveSnmp} disabled={savingSnmp || !loaded}>
+				<button class="vui-btn vui-btn-primary" onclick={saveSnmp} disabled={savingSnmp || !loaded || !dirtySnmp}>
 					{savingSnmp ? 'Saving...' : 'Save'}
 				</button>
 			</div>
