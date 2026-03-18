@@ -7,6 +7,7 @@
 	const navItems = [
 		{ href: '/', icon: '⊞', label: 'Dashboard' },
 		{ href: '/config', icon: '⚙', label: 'Config' },
+		{ href: '/points', icon: '⊡', label: 'Points' },
 		{ href: '/users', icon: '⊕', label: 'Users' },
 	];
 </script>

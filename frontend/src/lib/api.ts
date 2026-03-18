@@ -89,6 +89,55 @@ export interface SnmpConfig {
 	community: string;
 }
 
+export interface PointConfig {
+	objectType: string;
+	objectInstance: number;
+	// Display/conversion
+	scale: number;         // multiplier (default 1.0)
+	offset: number;        // added after scale (default 0.0)
+	engineeringUnit: number; // BACnet unit code (0-65535), 95 = no-units
+	// Bridge routing
+	bridgeToBacnetIp: boolean; // forward to BACnet/IP (default true)
+	bridgeToMqtt: boolean;     // publish to MQTT (default true)
+}
+
+export const ENGINEERING_UNITS: { code: number; label: string }[] = [
+	{ code: 95, label: 'No Units' },
+	{ code: 62, label: '°C' },
+	{ code: 64, label: '°F' },
+	{ code: 63, label: 'K' },
+	{ code: 98, label: '%' },
+	{ code: 53, label: 'Pa' },
+	{ code: 54, label: 'kPa' },
+	{ code: 55, label: 'bar' },
+	{ code: 56, label: 'psi' },
+	{ code: 57, label: 'inH₂O' },
+	{ code: 47, label: 'W' },
+	{ code: 48, label: 'kW' },
+	{ code: 49, label: 'MW' },
+	{ code: 19, label: 'kWh' },
+	{ code: 50, label: 'BTU/h' },
+	{ code: 3, label: 'A' },
+	{ code: 2, label: 'mA' },
+	{ code: 5, label: 'V' },
+	{ code: 27, label: 'Hz' },
+	{ code: 84, label: 'CFM' },
+	{ code: 89, label: 'L/s' },
+	{ code: 88, label: 'L/min' },
+	{ code: 31, label: 'm' },
+	{ code: 33, label: 'ft' },
+	{ code: 74, label: 'm/s' },
+	{ code: 75, label: 'L' },
+	{ code: 39, label: 'kg' },
+	{ code: 40, label: 'lb' },
+	{ code: 73, label: 's' },
+	{ code: 72, label: 'min' },
+	{ code: 71, label: 'h' },
+	{ code: 104, label: 'RPM' },
+	{ code: 90, label: '°' },
+	{ code: 96, label: 'ppm' },
+];
+
 // Object type display info
 export const OBJECT_TYPE_INFO: Record<string, { label: string; color: string }> = {
 	'analog-input':    { label: 'AI',  color: 'info' },
@@ -246,6 +295,17 @@ const MOCK_SNMP_CONFIG: SnmpConfig = {
 	community: 'public',
 };
 
+// Generate default PointConfig for every point in MOCK_POINTS[100]
+const MOCK_POINT_CONFIGS: PointConfig[] = MOCK_POINTS[100].map(p => ({
+	objectType: p.objectType,
+	objectInstance: p.objectInstance,
+	scale: 1.0,
+	offset: 0.0,
+	engineeringUnit: 95,
+	bridgeToBacnetIp: true,
+	bridgeToMqtt: true,
+}));
+
 // --- API functions ---
 
 import { dev } from '$app/environment';
@@ -301,10 +361,26 @@ export const api = {
 	setMqttConfig: (cfg: MqttConfig) => put('/config/mqtt', cfg, cfg),
 	getSnmpConfig: () => get('/config/snmp', MOCK_SNMP_CONFIG),
 	setSnmpConfig: (cfg: SnmpConfig) => put('/config/snmp', cfg, cfg),
+	getPointConfigs: () => get('/config/points', MOCK_POINT_CONFIGS),
+	setPointConfig: (objectType: string, objectInstance: number, cfg: PointConfig) =>
+		put(`/config/points/${objectType}:${objectInstance}`, cfg, cfg),
+	setPointConfigs: (configs: PointConfig[]) =>
+		put('/config/points', configs, configs),
 };
 
 export function pointKey(p: BacnetPoint): string {
 	return `${p.objectType}:${p.objectInstance}`;
+}
+
+export function isNumericType(objectType: string): boolean {
+	return (
+		objectType === 'analog-input' ||
+		objectType === 'analog-output' ||
+		objectType === 'analog-value' ||
+		objectType === 'multi-state-input' ||
+		objectType === 'multi-state-output' ||
+		objectType === 'multi-state-value'
+	);
 }
 
 // SSE client for live point value updates

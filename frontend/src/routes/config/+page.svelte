@@ -1,9 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
-	import { points } from '$lib/stores';
-	import type { NetworkConfig, BacnetConfig, NtpConfig, SyslogConfig, MqttConfig, SnmpConfig, BacnetPoint } from '$lib/api';
-	import { pointKey } from '$lib/api';
+	import type { NetworkConfig, BacnetConfig, NtpConfig, SyslogConfig, MqttConfig, SnmpConfig } from '$lib/api';
 
 	let net: NetworkConfig = $state({
 		dhcp: true, ip: '', subnet: '', gateway: '', dns: '', hostname: ''
@@ -36,9 +34,6 @@
 	let savedMsg = $state('');
 	let loaded = $state(false);
 
-	// Points list for MQTT point selection
-	let allPoints: BacnetPoint[] = $state([]);
-
 	onMount(async () => {
 		[net, bacnet, ntp, syslog, mqtt, snmp] = await Promise.all([
 			api.getNetworkConfig(),
@@ -52,10 +47,6 @@
 		while (ntp.servers.length < 3) ntp.servers = [...ntp.servers, ''];
 		loaded = true;
 	});
-
-	// Keep allPoints in sync with the store; unsubscribe on component destroy.
-	const unsubscribePoints = points.subscribe(v => { allPoints = v; });
-	onDestroy(unsubscribePoints);
 
 	function showMsg(msg: string) {
 		savedMsg = msg;
@@ -136,13 +127,7 @@
 		}
 	}
 
-	function togglePublishPoint(key: string) {
-		if (mqtt.publish_points.includes(key)) {
-			mqtt.publish_points = mqtt.publish_points.filter(k => k !== key);
-		} else {
-			mqtt.publish_points = [...mqtt.publish_points, key];
-		}
-	}
+
 </script>
 
 <svelte:head>
@@ -391,42 +376,15 @@
 				</table>
 			</div>
 
-			{#if mqtt.enabled && allPoints.length > 0}
+			{#if mqtt.enabled}
 				<div class="mqtt-points">
 					<div class="mqtt-points-header">
-						<span class="field-label" style="font-size: var(--vui-text-sm); font-weight: var(--vui-font-medium); color: var(--vui-text-sub);">Publish Points</span>
-						<span class="vui-badge" style="font-size: var(--vui-text-xs);">
-							{mqtt.publish_points.length === 0 ? 'All points' : `${mqtt.publish_points.length} selected`}
-						</span>
+						<span class="field-label" style="font-size: var(--vui-text-sm); font-weight: var(--vui-font-medium); color: var(--vui-text-sub);">Per-Point MQTT Routing</span>
 					</div>
-					<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); margin: 4px 0 8px;">
-						Leave all unchecked to publish every point. Check specific points to limit publishing.
-					</p>
-					<div class="points-checklist">
-						{#each allPoints as point (pointKey(point))}
-							{@const key = pointKey(point)}
-							<label class="point-check-row">
-								<input
-									type="checkbox"
-									checked={mqtt.publish_points.includes(key)}
-									onchange={() => togglePublishPoint(key)}
-									style="accent-color:var(--vui-accent)"
-								/>
-								<span class="vui-badge vui-badge-{point.objectType.startsWith('analog') ? 'info' : point.objectType.startsWith('binary') ? 'success' : 'purple'}" style="font-size: var(--vui-text-xs);">
-									{point.objectType.split('-').filter(w => w.length > 0).map(w => w[0].toUpperCase()).join('')}
-								</span>
-								<span style="font-size: var(--vui-text-sm);">{point.objectName}</span>
-							</label>
-						{/each}
-					</div>
-				</div>
-			{:else if mqtt.enabled}
-				<div class="mqtt-points">
-					<div class="mqtt-points-header">
-						<span class="field-label" style="font-size: var(--vui-text-sm); font-weight: var(--vui-font-medium); color: var(--vui-text-sub);">Publish Points</span>
-					</div>
-					<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); margin-top: 8px;">
-						No points loaded. Select a device from the dashboard to populate points, then return here to filter by point.
+					<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); margin-top: 8px; line-height: 1.6;">
+						Per-point MQTT publish control has moved to the
+						<a href="/points" style="color: var(--vui-accent); text-decoration: none; font-weight: var(--vui-font-medium);">Points Config</a>
+						page, where you can also set scale, offset, and engineering units for each point.
 					</p>
 				</div>
 			{/if}
