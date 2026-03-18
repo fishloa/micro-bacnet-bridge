@@ -12,6 +12,7 @@
 
 	// --- State ---
 	let devices: BacnetDevice[] = $state([]);
+	let selectedDeviceId: number | null = $state(null);
 	let allPoints: BacnetPoint[] = $state([]);
 	let configs: Map<string, PointConfig> = $state(new Map());
 	let dirty: Set<string> = $state(new Set());
@@ -19,6 +20,14 @@
 	let loading: boolean = $state(true);
 	let saveStatus: 'idle' | 'saving' | 'success' | 'error' = $state('idle');
 	let saveMessage: string = $state('');
+
+	let selectedDevice = $derived(devices.find(d => d.id === selectedDeviceId) ?? null);
+
+	async function selectDevice(deviceId: number) {
+		selectedDeviceId = deviceId;
+		allPoints = await api.getPoints(deviceId);
+		currentPage = 1;
+	}
 
 	// --- Pagination ---
 	const PAGE_SIZE_OPTIONS = [25, 50, 100, 0]; // 0 = All
@@ -104,8 +113,9 @@
 		try {
 			const devList = await api.getDevices();
 			devices = devList;
-			const targetDevice = devList.find(d => d.online && d.id === 100) ?? devList.find(d => d.online);
+			const targetDevice = devList.find(d => d.online) ?? devList[0];
 			if (targetDevice) {
+				selectedDeviceId = targetDevice.id;
 				allPoints = await api.getPoints(targetDevice.id);
 			}
 			const cfgList = await api.getPointConfigs();
@@ -247,9 +257,33 @@
 </script>
 
 <div class="page-root">
+	<!-- Device selector tabs -->
+	{#if devices.length > 1}
+		<div class="device-bar">
+			{#each devices as device (device.id)}
+				<button
+					class="device-tab vui-transition"
+					class:active={selectedDeviceId === device.id}
+					onclick={() => selectDevice(device.id)}
+				>
+					<span class="device-tab-status" class:online={device.online} class:offline={!device.online}></span>
+					<span class="device-tab-name">{device.name}</span>
+					<span class="device-tab-id">ID {device.id}</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
+
 	<div class="page-header">
 		<div class="header-left">
-			<h1 class="page-title">Points Configuration</h1>
+			<h1 class="page-title">
+				{#if selectedDevice}
+					{selectedDevice.name}
+					<span class="text-sub text-sm" style="font-weight: normal; margin-left: 8px;">Device {selectedDevice.id}</span>
+				{:else}
+					Points Configuration
+				{/if}
+			</h1>
 			<span class="text-sm text-sub">
 				{allPoints.length} point{allPoints.length !== 1 ? 's' : ''} · {filteredRows.length} shown
 			</span>
@@ -526,6 +560,57 @@
 </div>
 
 <style>
+	.device-bar {
+		display: flex;
+		gap: 4px;
+		overflow-x: auto;
+		flex-shrink: 0;
+		padding-bottom: 2px;
+	}
+	.device-tab {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 8px 14px;
+		border: 1px solid var(--vui-border);
+		border-radius: var(--vui-radius-md);
+		background: none;
+		color: var(--vui-text-sub);
+		font-size: var(--vui-text-sm);
+		cursor: pointer;
+		white-space: nowrap;
+	}
+	.device-tab:hover {
+		background: var(--vui-surface-hover);
+		color: var(--vui-text);
+	}
+	.device-tab.active {
+		background: var(--vui-accent-dim);
+		border-color: var(--vui-accent-border);
+		color: var(--vui-accent);
+	}
+	.device-tab-status {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		flex-shrink: 0;
+	}
+	.device-tab-status.online {
+		background: var(--vui-accent);
+		box-shadow: 0 0 4px var(--vui-accent-glow);
+	}
+	.device-tab-status.offline {
+		background: var(--vui-text-dim);
+	}
+	.device-tab-name {
+		font-weight: var(--vui-font-medium);
+	}
+	.device-tab-id {
+		font-size: var(--vui-text-xs);
+		color: var(--vui-text-muted);
+		font-family: var(--vui-font-mono);
+	}
+
 	.page-root {
 		display: flex;
 		flex-direction: column;
