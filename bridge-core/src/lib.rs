@@ -8,21 +8,19 @@
 //!
 //! # Modules
 //!
-//! - [`bacnet`]     — BACnet PDU types (object IDs, property IDs, values, APDU/NPDU enums)
-//! - [`npdu`]       — NPDU encode/decode
-//! - [`config`]     — Configuration persistence types (`BridgeConfig`)
-//! - [`dns_client`] — DNS stub resolver codec (RFC 1035, A record queries)
-//! - [`mdns`]       — mDNS / DNS-SD packet codec
-//! - [`ipc`]        — Inter-core ring buffer and `BacnetPdu` struct
-//! - [`error`]      — Shared error types (`EncodeError`, `DecodeError`, `BridgeError`)
-//! - [`ntp`]        — SNTP packet codec (RFC 4330)
-//! - [`syslog`]     — RFC 5424 syslog message formatter
-//! - [`snmp`]       — Minimal SNMP v2c agent codec (RFC 3416)
-//! - [`mqtt`]       — MQTT 3.1.1 publish-only client codec + HA auto-discovery
+//! - [`bacnet`]  — BACnet PDU types (object IDs, property IDs, values, APDU/NPDU enums)
+//! - [`npdu`]    — NPDU encode/decode
+//! - [`config`]  — Configuration persistence types (`BridgeConfig`)
+//! - [`mdns`]    — mDNS / DNS-SD packet codec
+//! - [`ipc`]     — Inter-core ring buffer and `BacnetPdu` struct
+//! - [`error`]   — Shared error types (`EncodeError`, `DecodeError`, `BridgeError`)
+//! - [`ntp`]     — SNTP packet codec (RFC 4330)
+//! - [`syslog`]  — RFC 5424 syslog message formatter
+//! - [`snmp`]    — Minimal SNMP v2c agent codec (RFC 3416)
+//! - [`mqtt`]    — MQTT 3.1.1 publish-only client codec + HA auto-discovery
 
 pub mod bacnet;
 pub mod config;
-pub mod dns_client;
 pub mod error;
 pub mod ipc;
 pub mod mdns;
@@ -35,9 +33,6 @@ pub mod syslog;
 // Top-level re-exports of the most commonly used types.
 pub use bacnet::{ApduType, BacnetValue, ObjectId, ObjectType, PropertyId, ServiceChoice};
 pub use config::{BacnetDeviceConfig, BridgeConfig, NetworkConfig, UserConfig, UserRole};
-pub use dns_client::{
-    decode_response as dns_decode_response, encode_query as dns_encode_query, DNS_PORT,
-};
 pub use error::{BridgeError, DecodeError, EncodeError};
 pub use ipc::{BacnetPdu, RingBuffer};
 pub use mdns::{

@@ -19,7 +19,7 @@ embassy-time = "0.5.0"
 embassy-sync = "0.7.2"
 
 # Networking
-embassy-net = { version = "0.8.0", features = ["tcp", "udp", "dhcpv4", "medium-ethernet", "multicast"] }
+embassy-net = { version = "0.8.0", features = ["tcp", "udp", "dhcpv4", "medium-ethernet", "multicast", "dns"] }
 embassy-net-wiznet = "0.2.1"
 
 # HAL traits
