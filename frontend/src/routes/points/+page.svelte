@@ -253,7 +253,13 @@
 								{/if}
 							</td>
 							<td class="cell-value mono">
-								{convertedValue(row.point, row.config)}
+								{#if numeric && (row.config.scale !== 1 || row.config.offset !== 0)}
+									<span class="raw-value text-muted">{row.point.presentValue}</span>
+									<span class="converted-arrow text-muted">&rarr;</span>
+									<span class="computed-value">{convertedValue(row.point, row.config)}</span>
+								{:else}
+									{convertedValue(row.point, row.config)}
+								{/if}
 							</td>
 							<td class="cell-input">
 								{#if numeric}
@@ -282,15 +288,19 @@
 								{/if}
 							</td>
 							<td class="cell-input">
-								<select
-									class="vui-input compact-select"
-									value={row.config.engineeringUnit}
-									onchange={(e) => onUnitChange(row.point, e)}
-								>
-									{#each ENGINEERING_UNITS as unit}
-										<option value={unit.code}>{unit.label}</option>
-									{/each}
-								</select>
+								{#if numeric}
+									<select
+										class="vui-input compact-select"
+										value={row.config.engineeringUnit}
+										onchange={(e) => onUnitChange(row.point, e)}
+									>
+										{#each ENGINEERING_UNITS as unit}
+											<option value={unit.code}>{unit.label}</option>
+										{/each}
+									</select>
+								{:else}
+									<span class="text-sub text-sm">—</span>
+								{/if}
 							</td>
 							<td style="text-align: center">
 								<input
@@ -441,6 +451,16 @@
 		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
 		color: var(--vui-text);
+	}
+	.raw-value {
+		font-size: var(--vui-text-xs);
+	}
+	.converted-arrow {
+		font-size: var(--vui-text-xs);
+		margin: 0 2px;
+	}
+	.computed-value {
+		color: var(--vui-accent);
 	}
 
 	.cell-input {
