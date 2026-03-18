@@ -8,6 +8,7 @@
 		pointKey,
 	} from '$lib/api';
 	import type { BacnetPoint, BacnetDevice, PointConfig } from '$lib/api';
+	import { exposureConfig } from '$lib/stores';
 
 	// --- State ---
 	let devices: BacnetDevice[] = $state([]);
@@ -443,7 +444,8 @@
 								<input
 									type="checkbox"
 									class="vui-checkbox"
-									checked={row.config.bridgeToBacnetIp}
+									checked={$exposureConfig.bacnetIpEnabled && row.config.bridgeToBacnetIp}
+									disabled={!$exposureConfig.bacnetIpEnabled}
 									onchange={(e) => onBacnetIpChange(row.point, e)}
 								/>
 							</td>
@@ -452,7 +454,8 @@
 								<input
 									type="checkbox"
 									class="vui-checkbox"
-									checked={row.config.bridgeToMqtt}
+									checked={$exposureConfig.mqttEnabled && row.config.bridgeToMqtt}
+									disabled={!$exposureConfig.mqttEnabled}
 									onchange={(e) => onMqttChange(row.point, e)}
 								/>
 							</td>
@@ -461,7 +464,8 @@
 								<input
 									type="checkbox"
 									class="vui-checkbox"
-									checked={row.config.exposeInApi}
+									checked={$exposureConfig.apiEnabled && row.config.exposeInApi}
+									disabled={!$exposureConfig.apiEnabled}
 									onchange={(e) => onApiChange(row.point, e)}
 								/>
 							</td>
@@ -503,14 +507,14 @@
 			</div>
 			<div class="pagination-right">
 				<button
-					class="vui-btn"
+					class="vui-btn vui-btn-primary"
 					onclick={() => { if (currentPage > 1) currentPage -= 1; }}
 					disabled={currentPage <= 1 || pageSize === 0}
 				>
 					&laquo; Prev
 				</button>
 				<button
-					class="vui-btn"
+					class="vui-btn vui-btn-primary"
 					onclick={() => { if (currentPage < totalPages) currentPage += 1; }}
 					disabled={currentPage >= totalPages || pageSize === 0}
 				>

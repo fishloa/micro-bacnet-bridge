@@ -40,6 +40,7 @@ export interface BacnetConfig {
 	mstpMac: number;
 	mstpBaud: number;
 	maxMaster: number;
+	bacnetIpEnabled: boolean;
 }
 
 export interface SystemStatus {
@@ -252,6 +253,7 @@ const MOCK_BACNET_CONFIG: BacnetConfig = {
 	mstpMac: 1,
 	mstpBaud: 76800,
 	maxMaster: 127,
+	bacnetIpEnabled: true,
 };
 
 const MOCK_STATUS: SystemStatus = {

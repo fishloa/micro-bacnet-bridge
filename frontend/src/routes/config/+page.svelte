@@ -2,12 +2,21 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import type { NetworkConfig, BacnetConfig, NtpConfig, SyslogConfig, MqttConfig, SnmpConfig } from '$lib/api';
+	import { exposureConfig } from '$lib/stores';
+
+	function updateExposure() {
+		$exposureConfig = {
+			bacnetIpEnabled: bacnet.bacnetIpEnabled,
+			mqttEnabled: mqtt.enabled,
+			apiEnabled: true,
+		};
+	}
 
 	let net: NetworkConfig = $state({
 		dhcp: true, ip: '', subnet: '', gateway: '', dns: '', hostname: ''
 	});
 	let bacnet: BacnetConfig = $state({
-		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 9600, maxMaster: 127
+		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 9600, maxMaster: 127, bacnetIpEnabled: true
 	});
 	let ntp: NtpConfig = $state({
 		enabled: true, use_dhcp_servers: true, servers: ['pool.ntp.org', '', ''], sync_interval_secs: 3600
@@ -46,6 +55,7 @@
 		// Pad NTP servers array to length 3 for the UI
 		while (ntp.servers.length < 3) ntp.servers = [...ntp.servers, ''];
 		loaded = true;
+		updateExposure();
 	});
 
 	function showMsg(msg: string) {
@@ -69,6 +79,7 @@
 		savingBacnet = true;
 		try {
 			await api.setBacnetConfig(bacnet);
+			updateExposure();
 			showMsg('BACnet config saved');
 		} catch {
 			showMsg('Failed to save BACnet config');
@@ -107,6 +118,7 @@
 		savingMqtt = true;
 		try {
 			await api.setMqttConfig(mqtt);
+			updateExposure();
 			showMsg('MQTT config saved');
 		} catch {
 			showMsg('Failed to save MQTT config');
@@ -144,10 +156,17 @@
 		{/if}
 	</div>
 
-	<div class="config-grid">
+	<!-- SYSTEM SECTION -->
+	<h2 class="section-label">System</h2>
+	<div class="section-grid-3">
 		<!-- Network Card -->
 		<div class="vui-card vui-animate-fade-in">
-			<div class="vui-section-header">Network</div>
+			<div class="card-title-row">
+				<div class="vui-section-header">Network</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork || !loaded}>
+					{savingNetwork ? 'Saving...' : 'Save'}
+				</button>
+			</div>
 			<table class="form-table">
 				<tbody>
 					<tr>
@@ -178,16 +197,16 @@
 					{/if}
 				</tbody>
 			</table>
-			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveNetwork} disabled={savingNetwork || !loaded}>
-					{savingNetwork ? 'Saving...' : 'Save Network'}
-				</button>
-			</div>
 		</div>
 
-		<!-- BACnet Card -->
+		<!-- BACnet / MS/TP Card -->
 		<div class="vui-card vui-animate-fade-in">
-			<div class="vui-section-header">BACnet / MS/TP</div>
+			<div class="card-title-row">
+				<div class="vui-section-header">BACnet / MS/TP</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded}>
+					{savingBacnet ? 'Saving...' : 'Save'}
+				</button>
+			</div>
 			<table class="form-table">
 				<tbody>
 					<tr>
@@ -223,16 +242,16 @@
 					</tr>
 				</tbody>
 			</table>
-			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded}>
-					{savingBacnet ? 'Saving...' : 'Save BACnet'}
-				</button>
-			</div>
 		</div>
 
-		<!-- NTP Card -->
+		<!-- NTP / Time Sync Card -->
 		<div class="vui-card vui-animate-fade-in">
-			<div class="vui-section-header">NTP / Time Sync</div>
+			<div class="card-title-row">
+				<div class="vui-section-header">NTP / Time Sync</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveNtp} disabled={savingNtp || !loaded}>
+					{savingNtp ? 'Saving...' : 'Save'}
+				</button>
+			</div>
 			<table class="form-table">
 				<tbody>
 					<tr>
@@ -265,71 +284,39 @@
 					{/if}
 				</tbody>
 			</table>
-			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveNtp} disabled={savingNtp || !loaded}>
-					{savingNtp ? 'Saving...' : 'Save NTP'}
-				</button>
-			</div>
-		</div>
-
-		<!-- Syslog Card -->
-		<div class="vui-card vui-animate-fade-in">
-			<div class="vui-section-header">Syslog</div>
-			<table class="form-table">
-				<tbody>
-					<tr>
-						<td class="field-label">Enabled</td>
-						<td><input type="checkbox" bind:checked={syslog.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
-					</tr>
-					{#if syslog.enabled}
-						<tr>
-							<td class="field-label">Server</td>
-							<td><input class="vui-input mono" bind:value={syslog.server} placeholder="syslog.example.com" /></td>
-						</tr>
-						<tr>
-							<td class="field-label">Port</td>
-							<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={syslog.port} /></td>
-						</tr>
-					{/if}
-				</tbody>
-			</table>
-			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveSyslog} disabled={savingSyslog || !loaded}>
-					{savingSyslog ? 'Saving...' : 'Save Syslog'}
-				</button>
-			</div>
-		</div>
-
-		<!-- SNMP Card -->
-		<div class="vui-card vui-animate-fade-in">
-			<div class="vui-section-header">SNMP</div>
-			<table class="form-table">
-				<tbody>
-					<tr>
-						<td class="field-label">Enabled</td>
-						<td><input type="checkbox" bind:checked={snmp.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
-					</tr>
-					{#if snmp.enabled}
-						<tr>
-							<td class="field-label">Community String</td>
-							<td><input class="vui-input mono" bind:value={snmp.community} placeholder="public" /></td>
-						</tr>
-					{/if}
-				</tbody>
-			</table>
-			<div class="card-actions">
-				<button class="vui-btn vui-btn-primary" onclick={saveSnmp} disabled={savingSnmp || !loaded}>
-					{savingSnmp ? 'Saving...' : 'Save SNMP'}
-				</button>
-			</div>
 		</div>
 	</div>
 
-	<!-- MQTT Card — full width -->
-	<div class="vui-card vui-animate-fade-in" style="margin-top: var(--vui-space-lg);">
-		<div class="vui-section-header">MQTT</div>
-		<div class="mqtt-grid">
-			<div>
+	<!-- EXPOSURES SECTION -->
+	<h2 class="section-label">Exposures</h2>
+	<div class="section-grid-2">
+		<!-- BACnet/IP Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="card-title-row">
+				<div class="vui-section-header">BACnet/IP</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveBacnet} disabled={savingBacnet || !loaded}>
+					{savingBacnet ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<td class="field-label">Enabled</td>
+						<td><input type="checkbox" bind:checked={bacnet.bacnetIpEnabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+					</tr>
+				</tbody>
+			</table>
+		</div>
+
+		<!-- MQTT Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="card-title-row">
+				<div class="vui-section-header">MQTT</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveMqtt} disabled={savingMqtt || !loaded}>
+					{savingMqtt ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+			<div class="mqtt-config">
 				<table class="form-table">
 					<tbody>
 						<tr>
@@ -374,25 +361,72 @@
 						{/if}
 					</tbody>
 				</table>
-			</div>
-
-			{#if mqtt.enabled}
-				<div class="mqtt-points">
-					<div class="mqtt-points-header">
-						<span class="field-label" style="font-size: var(--vui-text-sm); font-weight: var(--vui-font-medium); color: var(--vui-text-sub);">Per-Point MQTT Routing</span>
+				{#if mqtt.enabled}
+					<div class="mqtt-points-info">
+						<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); line-height: 1.6;">
+							Per-point MQTT publish control has moved to the
+							<a href="/points" style="color: var(--vui-accent); text-decoration: none; font-weight: var(--vui-font-medium);">Points Config</a>
+							page, where you can also set scale, offset, and engineering units for each point.
+						</p>
 					</div>
-					<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); margin-top: 8px; line-height: 1.6;">
-						Per-point MQTT publish control has moved to the
-						<a href="/points" style="color: var(--vui-accent); text-decoration: none; font-weight: var(--vui-font-medium);">Points Config</a>
-						page, where you can also set scale, offset, and engineering units for each point.
-					</p>
-				</div>
-			{/if}
+				{/if}
+			</div>
 		</div>
-		<div class="card-actions">
-			<button class="vui-btn vui-btn-primary" onclick={saveMqtt} disabled={savingMqtt || !loaded}>
-				{savingMqtt ? 'Saving...' : 'Save MQTT'}
-			</button>
+	</div>
+
+	<!-- OPERATIONS SECTION -->
+	<h2 class="section-label">Operations</h2>
+	<div class="section-grid-2">
+		<!-- Syslog Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="card-title-row">
+				<div class="vui-section-header">Syslog</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveSyslog} disabled={savingSyslog || !loaded}>
+					{savingSyslog ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<td class="field-label">Enabled</td>
+						<td><input type="checkbox" bind:checked={syslog.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+					</tr>
+					{#if syslog.enabled}
+						<tr>
+							<td class="field-label">Server</td>
+							<td><input class="vui-input mono" bind:value={syslog.server} placeholder="syslog.example.com" /></td>
+						</tr>
+						<tr>
+							<td class="field-label">Port</td>
+							<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={syslog.port} /></td>
+						</tr>
+					{/if}
+				</tbody>
+			</table>
+		</div>
+
+		<!-- SNMP Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="card-title-row">
+				<div class="vui-section-header">SNMP</div>
+				<button class="vui-btn vui-btn-primary" onclick={saveSnmp} disabled={savingSnmp || !loaded}>
+					{savingSnmp ? 'Saving...' : 'Save'}
+				</button>
+			</div>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<td class="field-label">Enabled</td>
+						<td><input type="checkbox" bind:checked={snmp.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+					</tr>
+					{#if snmp.enabled}
+						<tr>
+							<td class="field-label">Community String</td>
+							<td><input class="vui-input mono" bind:value={snmp.community} placeholder="public" /></td>
+						</tr>
+					{/if}
+				</tbody>
+			</table>
 		</div>
 	</div>
 </div>
@@ -403,21 +437,53 @@
 		height: 100%;
 		overflow-y: auto;
 	}
-	.config-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
-		gap: var(--vui-space-lg);
+
+	.section-label {
+		font-size: var(--vui-text-sm);
+		font-weight: var(--vui-font-semibold);
+		color: var(--vui-text-muted);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+		margin: var(--vui-space-lg) 0 var(--vui-space-sm);
 	}
+
+	.section-label:first-of-type {
+		margin-top: 0;
+	}
+
+	.section-grid-3 {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: var(--vui-space-lg);
+		margin-bottom: var(--vui-space-lg);
+	}
+
+	.section-grid-2 {
+		display: grid;
+		grid-template-columns: repeat(2, 1fr);
+		gap: var(--vui-space-lg);
+		margin-bottom: var(--vui-space-lg);
+	}
+
+	@media (max-width: 1000px) {
+		.section-grid-3,
+		.section-grid-2 {
+			grid-template-columns: 1fr;
+		}
+	}
+
 	.form-table {
 		width: 100%;
 		border-collapse: collapse;
 		margin: var(--vui-space-md) 0;
 	}
+
 	.form-table td {
 		padding: var(--vui-space-sm) 0;
 		vertical-align: middle;
 		text-align: left;
 	}
+
 	.form-table .field-label {
 		width: 160px;
 		font-size: var(--vui-text-sm);
@@ -426,53 +492,25 @@
 		white-space: nowrap;
 		padding-right: var(--vui-space-md);
 	}
+
 	.form-table .vui-input {
 		width: 100%;
 	}
-	.card-actions {
-		padding-top: var(--vui-space-md);
-		border-top: 1px solid var(--vui-border);
-		margin-top: var(--vui-space-sm);
-	}
-	.mqtt-grid {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: var(--vui-space-lg);
-	}
-	@media (max-width: 800px) {
-		.mqtt-grid {
-			grid-template-columns: 1fr;
-		}
-	}
-	.mqtt-points {
-		border-left: 1px solid var(--vui-border);
-		padding-left: var(--vui-space-lg);
-	}
-	.mqtt-points-header {
+
+	.card-title-row {
 		display: flex;
 		align-items: center;
-		gap: var(--vui-space-sm);
-		margin-top: var(--vui-space-md);
-		margin-bottom: 4px;
+		justify-content: space-between;
 	}
-	.points-checklist {
+
+	.mqtt-config {
 		display: flex;
 		flex-direction: column;
-		gap: 4px;
-		max-height: 320px;
-		overflow-y: auto;
-		padding-right: 4px;
 	}
-	.point-check-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 4px 6px;
-		border-radius: var(--vui-radius-sm);
-		cursor: pointer;
-		font-size: var(--vui-text-sm);
-	}
-	.point-check-row:hover {
-		background: var(--vui-bg-hover, rgba(255,255,255,0.05));
+
+	.mqtt-points-info {
+		margin-top: var(--vui-space-md);
+		padding-top: var(--vui-space-md);
+		border-top: 1px solid var(--vui-border);
 	}
 </style>
