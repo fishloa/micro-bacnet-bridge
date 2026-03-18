@@ -1,5 +1,7 @@
 #![no_std]
 #![no_main]
+#![feature(impl_trait_in_assoc_type)]
+#![recursion_limit = "512"]
 
 mod bacnet_ip;
 mod bridge;
@@ -13,7 +15,6 @@ mod mqtt;
 mod ntp;
 mod ota;
 mod snmp;
-mod sse;
 mod syslog;
 mod web_assets;
 
@@ -76,8 +77,9 @@ async fn main(spawner: Spawner) {
             (seed >> 40) as u8,
         ];
         bridge_config.mac_addr = mac;
-        // Persist so MAC is stable across reboots
-        cfg_mgr.save(&bridge_config);
+        // TODO: Persist MAC to flash once save() is verified stable.
+        // Temporarily disabled to debug boot failure after reboot.
+        // cfg_mgr.save(&bridge_config);
         info!(
             "first boot: generated MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
@@ -124,7 +126,13 @@ async fn main(spawner: Spawner) {
     let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs).unwrap();
 
     let w5500_int = embassy_rp::gpio::Input::new(p.PIN_21, embassy_rp::gpio::Pull::Up);
-    let w5500_rst = Output::new(p.PIN_20, Level::High);
+    let mut w5500_rst = Output::new(p.PIN_20, Level::High);
+
+    // Reset the W5500 cleanly — pulse RST low for 1ms then wait 150ms
+    w5500_rst.set_low();
+    Timer::after_millis(1).await;
+    w5500_rst.set_high();
+    Timer::after_millis(150).await;
 
     let wiznet_state = WIZNET_STATE.init(embassy_net_wiznet::State::new());
 
@@ -176,7 +184,7 @@ async fn main(spawner: Spawner) {
         embassy_net::new(w5500_device, net_config, stack_resources, random_seed);
 
     spawner.spawn(net_task(stack_runner)).unwrap();
-    spawner.spawn(http::http_task(stack)).unwrap();
+    spawner.spawn(http::http_task(stack, spawner)).unwrap();
     spawner.spawn(mdns::mdns_task(stack)).unwrap();
     spawner.spawn(bacnet_ip::bacnet_ip_task(stack)).unwrap();
     spawner.spawn(ntp::ntp_task(stack)).unwrap();
@@ -266,4 +274,27 @@ fn rosc_random_seed() -> u64 {
 fn subnet_mask_to_prefix(mask: [u8; 4]) -> u8 {
     let raw = u32::from_be_bytes(mask);
     raw.leading_ones() as u8
+}
+
+/// Trigger a full system reset via the RP2040 watchdog.
+/// Unlike `SCB::sys_reset()`, this resets ALL peripherals (SPI, GPIO, etc.)
+/// so the W5500 comes up clean on reboot.
+pub fn system_reset() -> ! {
+    // PSM (Power-on State Machine) WDSEL register: enable watchdog reset for
+    // all subsystems. Address: 0x40010000 + 0x04 (WDSEL).
+    const PSM_BASE: u32 = 0x4001_0000;
+    const PSM_WDSEL: *mut u32 = (PSM_BASE + 0x04) as *mut u32;
+    // Enable all reset sources
+    unsafe { core::ptr::write_volatile(PSM_WDSEL, 0x0001_FFFF) };
+
+    // Watchdog: CTRL register at 0x40058000.
+    const WATCHDOG_BASE: u32 = 0x4005_8000;
+    const WATCHDOG_CTRL: *mut u32 = (WATCHDOG_BASE + 0x00) as *mut u32;
+    // Set trigger bit (bit 31) to force immediate reset
+    unsafe { core::ptr::write_volatile(WATCHDOG_CTRL, 1 << 31) };
+
+    // Should never reach here
+    loop {
+        cortex_m::asm::wfi();
+    }
 }

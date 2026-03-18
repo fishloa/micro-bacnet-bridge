@@ -47,6 +47,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_time::Timer;
 use embedded_io_async::Write as _;
+use picoserve::io::Read as PicoRead;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -86,6 +87,137 @@ pub static FLASH: Mutex<
 
 // ---------------------------------------------------------------------------
 // OTA upload handler
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// picoserve streaming OTA entry point
+// ---------------------------------------------------------------------------
+
+/// Handle an OTA firmware upload via a picoserve `RequestBodyReader`.
+///
+/// Reads `content_length` bytes from `reader`, writes to flash sector-by-sector.
+/// Returns `Ok(())` on success; `Err(message)` with a short error string on failure.
+///
+/// The caller is responsible for sending the HTTP response and rebooting.
+pub async fn handle_firmware_stream<R: PicoRead>(
+    reader: &mut R,
+    content_length: usize,
+) -> Result<(), &'static str> {
+    if content_length > MAX_FIRMWARE_SIZE {
+        return Err("Firmware image exceeds maximum allowed size");
+    }
+
+    let mut sector_buf = [0u8; SECTOR_SIZE];
+    let mut bytes_received: usize = 0;
+    let mut first_sector = true;
+
+    let num_sectors = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE;
+
+    for sector_idx in 0..num_sectors {
+        let sector_start = sector_idx * SECTOR_SIZE;
+        let sector_end = (sector_start + SECTOR_SIZE).min(content_length);
+        let sector_data_len = sector_end - sector_start;
+
+        // Zero the sector buffer (so tail bytes of the last sector are 0xFF-free
+        // padding — harmless for flash).
+        sector_buf[..SECTOR_SIZE].fill(0);
+
+        // Fill sector_buf[0..sector_data_len] from reader
+        let mut filled = 0usize;
+        while filled < sector_data_len {
+            match reader.read(&mut sector_buf[filled..sector_data_len]).await {
+                Ok(0) => {
+                    warn!(
+                        "ota: stream closed early (received {} of {} bytes)",
+                        bytes_received, content_length
+                    );
+                    return Err("Connection closed before image was fully received");
+                }
+                Ok(n) => {
+                    filled += n;
+                    bytes_received += n;
+                }
+                Err(_) => {
+                    warn!("ota: read error at byte {}", bytes_received);
+                    return Err("Socket read error during upload");
+                }
+            }
+        }
+
+        // Detect format + validate on first sector
+        if first_sector {
+            first_sector = false;
+            if is_uf2(&sector_buf) {
+                info!("ota: UF2 format detected via stream");
+                // UF2 streaming: delegate to UF2 handler.
+                // For now, UF2 via the picoserve path is not fully implemented;
+                // the user should upload raw binaries via the REST API.
+                // (Full UF2 streaming support can be added in a future iteration.)
+                warn!("ota: UF2 upload via picoserve not yet supported; use raw binary");
+                return Err("UF2 upload not supported via this endpoint; upload raw binary");
+            }
+            if !validate_firmware_image(&sector_buf[..8.min(sector_data_len)]) {
+                warn!("ota: invalid ARM vector table");
+                return Err("Invalid firmware: bad ARM vector table");
+            }
+            info!(
+                "ota: stream: raw binary OK, writing {} sectors",
+                num_sectors
+            );
+        }
+
+        // Erase + write sector
+        let flash_offset = FIRMWARE_OFFSET + (sector_idx * SECTOR_SIZE) as u32;
+        if flash_offset + SECTOR_SIZE as u32 > CONFIG_SECTOR_OFFSET {
+            error!("ota: would overwrite config sector — aborting");
+            return Err("Internal error: image would overwrite config");
+        }
+
+        let flash_ok = {
+            let mut flash_guard = FLASH.lock().await;
+            match flash_guard.as_mut() {
+                None => {
+                    error!("ota: flash not initialised");
+                    false
+                }
+                Some(flash) => {
+                    let erase_ok = flash
+                        .blocking_erase(flash_offset, flash_offset + SECTOR_SIZE as u32)
+                        .is_ok();
+                    if !erase_ok {
+                        error!("ota: erase failed at {:#x}", flash_offset);
+                        false
+                    } else {
+                        let aligned = (sector_data_len + 255) & !255;
+                        flash
+                            .blocking_write(flash_offset, &sector_buf[..aligned])
+                            .is_ok()
+                    }
+                }
+            }
+        };
+
+        if !flash_ok {
+            return Err("Flash write error — device may be in bad state");
+        }
+
+        info!(
+            "ota: sector {}/{} written ({} bytes)",
+            sector_idx + 1,
+            num_sectors,
+            sector_data_len,
+        );
+    }
+
+    info!(
+        "ota: {} bytes written to flash successfully",
+        bytes_received
+    );
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Legacy TcpSocket OTA entry point (kept for reference; not called by picoserve path)
 // ---------------------------------------------------------------------------
 
 /// Handle `POST /api/v1/system/firmware`.
@@ -277,7 +409,7 @@ pub async fn handle_firmware_upload(
 
     // ---- 6. Reboot ----
     info!("ota: triggering system reset");
-    cortex_m::peripheral::SCB::sys_reset();
+    crate::system_reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -439,7 +571,7 @@ async fn handle_uf2_upload(
     )
     .await;
     Timer::after_millis(500).await;
-    cortex_m::peripheral::SCB::sys_reset();
+    crate::system_reset();
 }
 
 /// Erase a sector and write data to it.

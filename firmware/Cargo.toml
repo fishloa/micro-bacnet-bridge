@@ -43,6 +43,9 @@ defmt = "1.0.1"
 defmt-rtt = "1.1.0"
 panic-probe = { version = "1.0.0", features = ["print-defmt"] }
 
+# HTTP server
+picoserve = { version = "0.18", default-features = false, features = ["embassy", "defmt"] }
+
 # Serialisation (no_std)
 serde-json-core = "0.6"
 
