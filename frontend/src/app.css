@@ -133,3 +133,7 @@ a:hover {
 	font-size: var(--vui-text-xl);
 	font-weight: var(--vui-font-bold);
 }
+
+.vui-section-header {
+	font-size: var(--vui-text-lg) !important;
+}
