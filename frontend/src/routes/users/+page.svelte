@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { dev } from '$app/environment';
 	import { api } from '$lib/api';
 	import type { User } from '$lib/api';
 
@@ -8,36 +9,43 @@
 	let newUsername = $state('');
 	let newPassword = $state('');
 	let newRole: 'admin' | 'viewer' = $state('viewer');
+	let errorMsg = $state('');
 
 	onMount(async () => {
-		users = await api.getUsers();
+		try {
+			users = await api.getUsers();
+		} catch (e) {
+			errorMsg = `Failed to load users: ${e instanceof Error ? e.message : String(e)}`;
+		}
 	});
 
 	async function createUser() {
 		if (!newUsername || !newPassword) return;
+		errorMsg = '';
 		try {
 			await api.createUser(newUsername, newPassword, newRole);
 			users = await api.getUsers();
 			newUsername = '';
 			newPassword = '';
 			showCreate = false;
-		} catch {
-			// Fallback: optimistic local update for dev mode
-			const maxId = users.reduce((m, u) => Math.max(m, u.id), 0);
-			users = [...users, { id: maxId + 1, username: newUsername, role: newRole }];
-			newUsername = '';
-			newPassword = '';
-			showCreate = false;
+		} catch (e) {
+			if (dev) {
+				// In dev mode the API mock always succeeds synchronously; an error here
+				// means the mock itself threw, which should not happen. Surface it.
+				errorMsg = `Create failed: ${e instanceof Error ? e.message : String(e)}`;
+			} else {
+				errorMsg = `Failed to create user: ${e instanceof Error ? e.message : String(e)}`;
+			}
 		}
 	}
 
 	async function deleteUser(id: number) {
+		errorMsg = '';
 		try {
 			await api.deleteUser(id);
 			users = users.filter(u => u.id !== id);
-		} catch {
-			// Fallback: optimistic local update for dev mode
-			users = users.filter(u => u.id !== id);
+		} catch (e) {
+			errorMsg = `Failed to delete user: ${e instanceof Error ? e.message : String(e)}`;
 		}
 	}
 </script>
@@ -53,6 +61,12 @@
 			{showCreate ? 'Cancel' : '+ Add User'}
 		</button>
 	</div>
+
+	{#if errorMsg}
+		<div class="vui-alert vui-alert-danger" style="margin-bottom: var(--vui-space-md);" role="alert">
+			{errorMsg}
+		</div>
+	{/if}
 
 	{#if showCreate}
 		<div class="vui-card vui-animate-fade-in" style="margin-bottom: var(--vui-space-lg);">

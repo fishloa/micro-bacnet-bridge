@@ -551,7 +551,7 @@ export function isNumericType(objectType: string): boolean {
 // SSE client for live point value updates.
 // SSE event data format: {"deviceId":<n>,"objType":<n>,"instance":<n>,"value":<v>}
 // The update map key is `{deviceId}:{objectType}:{objectInstance}`.
-export function connectSSE(onUpdate: (updates: Record<string, number>) => void): () => void {
+export function connectSSE(onUpdate: (updates: Record<string, string | number | boolean>) => void): () => void {
 	const url = '/api/events';
 	let es: EventSource | null = null;
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;

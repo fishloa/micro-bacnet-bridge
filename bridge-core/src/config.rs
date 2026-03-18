@@ -1417,4 +1417,145 @@ mod tests {
         let (decoded, _): (BridgeConfig, _) = serde_json_core::from_slice(&buf[..json]).unwrap();
         assert!(decoded.provisioned);
     }
+
+    // -----------------------------------------------------------------------
+    // Serde edge cases — malformed / partial JSON must not panic
+    // -----------------------------------------------------------------------
+
+    /// Completely empty input must return an error, not panic.
+    #[test]
+    fn deserialize_empty_input_is_error() {
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(b"");
+        assert!(
+            result.is_err(),
+            "empty input must be a deserialization error"
+        );
+    }
+
+    /// Truncated JSON object (no closing brace) must return an error.
+    #[test]
+    fn deserialize_truncated_json_is_error() {
+        let result: Result<(BridgeConfig, _), _> =
+            serde_json_core::from_slice(b"{\"magic\":3134825022,\"version\":4");
+        assert!(
+            result.is_err(),
+            "truncated JSON must be a deserialization error"
+        );
+    }
+
+    /// A JSON null where an object is expected must return an error.
+    #[test]
+    fn deserialize_null_is_error() {
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(b"null");
+        assert!(
+            result.is_err(),
+            "null input must be a deserialization error"
+        );
+    }
+
+    /// A JSON array where an object is expected must return an error.
+    #[test]
+    fn deserialize_array_is_error() {
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(b"[]");
+        assert!(
+            result.is_err(),
+            "array input must be a deserialization error"
+        );
+    }
+
+    /// A bare integer where an object is expected must return an error.
+    #[test]
+    fn deserialize_integer_is_error() {
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(b"42");
+        assert!(
+            result.is_err(),
+            "bare integer must be a deserialization error"
+        );
+    }
+
+    /// An empty JSON object `{}` must succeed and produce default values
+    /// (all fields carry `#[serde(default)]`).
+    #[test]
+    fn deserialize_empty_object_uses_defaults() {
+        let (cfg, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(b"{}").expect("empty object must deserialize to defaults");
+        // Magic and version come from their default fns.
+        assert_eq!(cfg.magic, MAGIC);
+        assert_eq!(cfg.version, CONFIG_VERSION);
+        assert_eq!(cfg.hostname.as_str(), "bacnet-bridge");
+        assert!(cfg.network.dhcp);
+    }
+
+    /// Unknown / extra fields in the JSON must be silently ignored (forward
+    /// compatibility for newer firmware writing to older flash).
+    #[test]
+    fn deserialize_unknown_fields_ignored() {
+        let json =
+            br#"{"magic":3134825022,"version":4,"unknown_future_field":true,"provisioned":true}"#;
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(json);
+        assert!(
+            result.is_ok(),
+            "unknown fields must be silently ignored; got: {:?}",
+            result.err()
+        );
+        let (cfg, _) = result.unwrap();
+        assert!(cfg.provisioned);
+    }
+
+    /// A wrong type for a known field (string instead of bool) must return an
+    /// error rather than panic or silently corrupt the struct.
+    #[test]
+    fn deserialize_wrong_type_for_field_is_error() {
+        // `provisioned` expects a bool; supply a string.
+        let json = br#"{"magic":3134825022,"version":4,"provisioned":"yes"}"#;
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(json);
+        assert!(
+            result.is_err(),
+            "wrong type for 'provisioned' must be a deserialization error"
+        );
+    }
+
+    /// An integer that overflows u32 in the `magic` field must return an error.
+    #[test]
+    fn deserialize_magic_overflow_is_error() {
+        // 9999999999 exceeds u32::MAX (4294967295).
+        let json = br#"{"magic":9999999999}"#;
+        let result: Result<(BridgeConfig, _), _> = serde_json_core::from_slice(json);
+        assert!(
+            result.is_err(),
+            "u32 overflow in 'magic' must be a deserialization error"
+        );
+    }
+
+    /// A partial but syntactically valid single-field object must succeed and
+    /// produce correct defaults for all other fields.
+    #[test]
+    fn deserialize_partial_object_uses_defaults_for_missing_fields() {
+        let json = br#"{"provisioned":true}"#;
+        let (cfg, _): (BridgeConfig, _) = serde_json_core::from_slice(json)
+            .expect("partial object with valid field must deserialize");
+        assert!(cfg.provisioned);
+        // All other fields should be defaults.
+        assert_eq!(cfg.magic, MAGIC);
+        assert_eq!(cfg.hostname.as_str(), "bacnet-bridge");
+        assert!(cfg.users.is_empty());
+    }
+
+    /// A magic field set to 0 survives deserialization but fails `validate()`.
+    #[test]
+    fn deserialize_bad_magic_survives_but_fails_validate() {
+        let json = br#"{"magic":0,"version":4,"provisioned":false}"#;
+        let (cfg, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(json).expect("bad magic must deserialize without panic");
+        assert!(!cfg.validate(), "bad magic must fail validate()");
+    }
+
+    /// A version field with the wrong value survives deserialization but fails `validate()`.
+    #[test]
+    fn deserialize_bad_version_survives_but_fails_validate() {
+        let json = br#"{"magic":3134825022,"version":99}"#;
+        let (cfg, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(json).expect("bad version must deserialize without panic");
+        assert!(!cfg.validate(), "bad version must fail validate()");
+    }
 }

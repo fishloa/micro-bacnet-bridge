@@ -46,7 +46,7 @@
 
 		// Subscribe to live value updates.
 		// SSE keys now include deviceId: `{deviceId}:{objectType}:{objectInstance}`
-		disconnectSSE = connectSSE((updates) => {
+		disconnectSSE = connectSSE((updates: Record<string, string | number | boolean>) => {
 			let changed = false;
 			const updated = $points.map(p => {
 				const devId = (p as BacnetPoint & { _deviceId?: number })._deviceId ?? $deviceId;

@@ -277,23 +277,37 @@ fn write_rr_header(
 
 #[inline]
 pub(crate) fn write_u16(buf: &mut [u8], pos: &mut usize, val: u16) {
-    buf[*pos] = (val >> 8) as u8;
-    buf[*pos + 1] = val as u8;
+    debug_assert!(
+        *pos + 2 <= buf.len(),
+        "write_u16: pos={} buf.len()={}",
+        *pos,
+        buf.len()
+    );
+    buf[*pos..*pos + 2].copy_from_slice(&val.to_be_bytes());
     *pos += 2;
 }
 
 #[inline]
 fn write_u32(buf: &mut [u8], pos: &mut usize, val: u32) {
-    buf[*pos] = (val >> 24) as u8;
-    buf[*pos + 1] = (val >> 16) as u8;
-    buf[*pos + 2] = (val >> 8) as u8;
-    buf[*pos + 3] = val as u8;
+    debug_assert!(
+        *pos + 4 <= buf.len(),
+        "write_u32: pos={} buf.len()={}",
+        *pos,
+        buf.len()
+    );
+    buf[*pos..*pos + 4].copy_from_slice(&val.to_be_bytes());
     *pos += 4;
 }
 
 #[inline]
 pub(crate) fn read_u16(data: &[u8], pos: usize) -> u16 {
-    ((data[pos] as u16) << 8) | (data[pos + 1] as u16)
+    debug_assert!(
+        pos + 2 <= data.len(),
+        "read_u16: pos={} data.len()={}",
+        pos,
+        data.len()
+    );
+    u16::from_be_bytes([data[pos], data[pos + 1]])
 }
 
 // ---------------------------------------------------------------------------
