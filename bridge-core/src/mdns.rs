@@ -118,7 +118,7 @@ pub struct ResourceRecord<'a> {
 /// L6: The total encoded name length (sum of all label bytes + length bytes +
 /// terminating zero) must not exceed 253 bytes per RFC 1035 §2.3.4.  This
 /// function validates that constraint before writing anything.
-fn write_name(
+pub(crate) fn write_name(
     buf: &mut [u8],
     pos: &mut usize,
     name: &str,
@@ -184,7 +184,10 @@ fn write_label(buf: &mut [u8], pos: &mut usize, label: &str) -> Result<(), Encod
 /// byte offset just *after* the name (not following any pointer target).
 ///
 /// We limit pointer following to 8 hops to prevent infinite loops.
-fn read_name(data: &[u8], start: usize) -> Result<(heapless::String<128>, usize), DecodeError> {
+pub(crate) fn read_name(
+    data: &[u8],
+    start: usize,
+) -> Result<(heapless::String<128>, usize), DecodeError> {
     let mut name: heapless::String<128> = heapless::String::new();
     let mut pos = start;
     let mut end_pos: Option<usize> = None;
@@ -273,7 +276,7 @@ fn write_rr_header(
 // ---------------------------------------------------------------------------
 
 #[inline]
-fn write_u16(buf: &mut [u8], pos: &mut usize, val: u16) {
+pub(crate) fn write_u16(buf: &mut [u8], pos: &mut usize, val: u16) {
     buf[*pos] = (val >> 8) as u8;
     buf[*pos + 1] = val as u8;
     *pos += 2;
@@ -289,7 +292,7 @@ fn write_u32(buf: &mut [u8], pos: &mut usize, val: u32) {
 }
 
 #[inline]
-fn read_u16(data: &[u8], pos: usize) -> u16 {
+pub(crate) fn read_u16(data: &[u8], pos: usize) -> u16 {
     ((data[pos] as u16) << 8) | (data[pos + 1] as u16)
 }
 

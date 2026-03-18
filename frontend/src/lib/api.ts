@@ -58,6 +58,37 @@ export interface User {
 	role: 'admin' | 'viewer';
 }
 
+export interface NtpConfig {
+	enabled: boolean;
+	use_dhcp_servers: boolean;
+	servers: string[];
+	sync_interval_secs: number;
+}
+
+export interface SyslogConfig {
+	enabled: boolean;
+	server: string;
+	port: number;
+}
+
+export interface MqttConfig {
+	enabled: boolean;
+	broker: string;
+	port: number;
+	client_id: string;
+	username: string;
+	password: string;
+	topic_prefix: string;
+	ha_discovery_enabled: boolean;
+	ha_discovery_prefix: string;
+	publish_points: string[];
+}
+
+export interface SnmpConfig {
+	enabled: boolean;
+	community: string;
+}
+
 // Object type display info
 export const OBJECT_TYPE_INFO: Record<string, { label: string; color: string }> = {
 	'analog-input':    { label: 'AI',  color: 'info' },
@@ -184,6 +215,37 @@ const MOCK_USERS: User[] = [
 	{ id: 2, username: 'operator', role: 'viewer' },
 ];
 
+const MOCK_NTP_CONFIG: NtpConfig = {
+	enabled: true,
+	use_dhcp_servers: true,
+	servers: ['pool.ntp.org', '', ''],
+	sync_interval_secs: 3600,
+};
+
+const MOCK_SYSLOG_CONFIG: SyslogConfig = {
+	enabled: false,
+	server: '',
+	port: 514,
+};
+
+const MOCK_MQTT_CONFIG: MqttConfig = {
+	enabled: false,
+	broker: '',
+	port: 1883,
+	client_id: 'bacnet-bridge',
+	username: '',
+	password: '',
+	topic_prefix: 'bacnet',
+	ha_discovery_enabled: false,
+	ha_discovery_prefix: 'homeassistant',
+	publish_points: [],
+};
+
+const MOCK_SNMP_CONFIG: SnmpConfig = {
+	enabled: false,
+	community: 'public',
+};
+
 // --- API functions ---
 
 import { dev } from '$app/environment';
@@ -231,6 +293,14 @@ export const api = {
 	getUsers: () => get('/users', MOCK_USERS),
 	writePoint: (deviceId: number, objectType: string, objectInstance: number, value: string | number | boolean) =>
 		put(`/devices/${deviceId}/points/${objectType}:${objectInstance}`, { value }, { ok: true }),
+	getNtpConfig: () => get('/config/ntp', MOCK_NTP_CONFIG),
+	setNtpConfig: (cfg: NtpConfig) => put('/config/ntp', cfg, cfg),
+	getSyslogConfig: () => get('/config/syslog', MOCK_SYSLOG_CONFIG),
+	setSyslogConfig: (cfg: SyslogConfig) => put('/config/syslog', cfg, cfg),
+	getMqttConfig: () => get('/config/mqtt', MOCK_MQTT_CONFIG),
+	setMqttConfig: (cfg: MqttConfig) => put('/config/mqtt', cfg, cfg),
+	getSnmpConfig: () => get('/config/snmp', MOCK_SNMP_CONFIG),
+	setSnmpConfig: (cfg: SnmpConfig) => put('/config/snmp', cfg, cfg),
 };
 
 export function pointKey(p: BacnetPoint): string {

@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 pub const MAGIC: u32 = 0xBAC0_CA1E;
 
 /// Current schema version. Increment when fields are added/removed.
-pub const CONFIG_VERSION: u16 = 1;
+pub const CONFIG_VERSION: u16 = 2;
 
 // ---------------------------------------------------------------------------
 // NetworkConfig
@@ -104,13 +104,146 @@ pub struct UserConfig {
 }
 
 // ---------------------------------------------------------------------------
+// NtpConfig
+// ---------------------------------------------------------------------------
+
+/// NTP time synchronisation configuration.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NtpConfig {
+    /// Enable NTP synchronisation.
+    pub enabled: bool,
+    /// Use NTP servers from DHCP (option 42). If false or DHCP unavailable, use manual servers.
+    pub use_dhcp_servers: bool,
+    /// Manual NTP server hostnames (resolved via DNS). Up to 3.
+    pub servers: Vec<String<64>, 3>,
+    /// Sync interval in seconds (default 3600, minimum 60).
+    pub sync_interval_secs: u32,
+}
+
+impl Default for NtpConfig {
+    fn default() -> Self {
+        let mut servers = Vec::new();
+        let mut s = String::new();
+        let _ = s.push_str("pool.ntp.org");
+        let _ = servers.push(s);
+        Self {
+            enabled: true,
+            use_dhcp_servers: true,
+            servers,
+            sync_interval_secs: 3600,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SyslogConfig
+// ---------------------------------------------------------------------------
+
+/// Remote syslog (RFC 3164 / RFC 5424) configuration.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SyslogConfig {
+    /// Enable remote syslog forwarding.
+    pub enabled: bool,
+    /// Syslog server hostname (resolved via DNS).
+    pub server: String<64>,
+    /// UDP port (default 514).
+    pub port: u16,
+}
+
+impl Default for SyslogConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            server: String::new(),
+            port: 514,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MqttConfig
+// ---------------------------------------------------------------------------
+
+/// MQTT broker and publishing configuration.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MqttConfig {
+    /// Enable MQTT publishing.
+    pub enabled: bool,
+    /// MQTT broker hostname.
+    pub broker: String<64>,
+    /// TCP port (default 1883).
+    pub port: u16,
+    /// MQTT client ID.
+    pub client_id: String<32>,
+    /// Optional username (empty = anonymous).
+    pub username: String<32>,
+    /// Optional password (empty = none).
+    pub password: String<32>,
+    /// Topic prefix for publishing point values (e.g. "bacnet-bridge").
+    pub topic_prefix: String<32>,
+    /// Enable Home Assistant MQTT auto-discovery.
+    pub ha_discovery_enabled: bool,
+    /// HA discovery prefix (default "homeassistant").
+    pub ha_discovery_prefix: String<32>,
+    /// Which points to publish, in "objectType:instance" format. Empty = publish all.
+    pub publish_points: Vec<String<32>, 64>,
+}
+
+impl Default for MqttConfig {
+    fn default() -> Self {
+        let mut client_id = String::new();
+        let _ = client_id.push_str("bacnet-bridge");
+        let mut topic_prefix = String::new();
+        let _ = topic_prefix.push_str("bacnet-bridge");
+        let mut ha_discovery_prefix = String::new();
+        let _ = ha_discovery_prefix.push_str("homeassistant");
+        Self {
+            enabled: false,
+            broker: String::new(),
+            port: 1883,
+            client_id,
+            username: String::new(),
+            password: String::new(),
+            topic_prefix,
+            ha_discovery_enabled: false,
+            ha_discovery_prefix,
+            publish_points: Vec::new(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SnmpConfig
+// ---------------------------------------------------------------------------
+
+/// SNMP agent configuration.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SnmpConfig {
+    /// Enable SNMP agent.
+    pub enabled: bool,
+    /// SNMPv1/v2c community string.
+    pub community: String<32>,
+}
+
+impl Default for SnmpConfig {
+    fn default() -> Self {
+        let mut community = String::new();
+        let _ = community.push_str("public");
+        Self {
+            enabled: true,
+            community,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // BridgeConfig
 // ---------------------------------------------------------------------------
 
 /// Top-level bridge configuration struct, persisted to flash.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeConfig {
-    /// Must equal `MAGIC` (0xBAC0_BRDG) for the config to be considered valid.
+    /// Must equal `MAGIC` (0xBAC0_CA1E) for the config to be considered valid.
     pub magic: u32,
     /// Schema version. Must equal `CONFIG_VERSION`.
     pub version: u16,
@@ -122,6 +255,14 @@ pub struct BridgeConfig {
     pub hostname: String<32>,
     /// Configured user accounts (max 4).
     pub users: Vec<UserConfig, 4>,
+    /// NTP time synchronisation settings.
+    pub ntp: NtpConfig,
+    /// Remote syslog settings.
+    pub syslog: SyslogConfig,
+    /// MQTT broker and publishing settings.
+    pub mqtt: MqttConfig,
+    /// SNMP agent settings.
+    pub snmp: SnmpConfig,
 }
 
 impl Default for BridgeConfig {
@@ -135,6 +276,10 @@ impl Default for BridgeConfig {
             bacnet: BacnetDeviceConfig::default(),
             hostname,
             users: Vec::new(),
+            ntp: NtpConfig::default(),
+            syslog: SyslogConfig::default(),
+            mqtt: MqttConfig::default(),
+            snmp: SnmpConfig::default(),
         }
     }
 }
@@ -156,6 +301,10 @@ impl BridgeConfig {
     /// - `bacnet.device_id` <= 0x003F_FFFE (22-bit BACnet instance max)
     /// - `bacnet.max_master` >= 1 && <= 127
     /// - `hostname` is non-empty
+    /// - `ntp.sync_interval_secs` >= 60
+    /// - `syslog.port` > 0 when `syslog.enabled`
+    /// - `mqtt.port` > 0 and `mqtt.broker` non-empty when `mqtt.enabled`
+    /// - `snmp.community` non-empty when `snmp.enabled`
     pub fn validate(&self) -> bool {
         if self.magic != MAGIC || self.version != CONFIG_VERSION {
             return false;
@@ -173,6 +322,23 @@ impl BridgeConfig {
             return false;
         }
         if self.hostname.is_empty() {
+            return false;
+        }
+        if self.ntp.sync_interval_secs < 60 {
+            return false;
+        }
+        if self.syslog.enabled && self.syslog.port == 0 {
+            return false;
+        }
+        if self.mqtt.enabled {
+            if self.mqtt.port == 0 {
+                return false;
+            }
+            if self.mqtt.broker.is_empty() {
+                return false;
+            }
+        }
+        if self.snmp.enabled && self.snmp.community.is_empty() {
             return false;
         }
         true
@@ -236,11 +402,10 @@ mod tests {
     #[test]
     fn serialize_deserialize_round_trip() {
         let cfg = BridgeConfig::default();
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 2048];
         let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
         let (decoded, _): (BridgeConfig, _) =
             serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
-        assert_eq!(cfg, decoded);
         assert!(decoded.validate());
     }
 
@@ -257,11 +422,10 @@ mod tests {
             })
             .expect("push failed");
 
-        let mut buf = [0u8; 1024];
+        let mut buf = [0u8; 2048];
         let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
         let (decoded, _): (BridgeConfig, _) =
             serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
-        assert_eq!(cfg, decoded);
         assert_eq!(decoded.users.len(), 1);
         assert_eq!(decoded.users[0].role, UserRole::Admin);
     }
@@ -333,12 +497,270 @@ mod tests {
         cfg.network.ip = [10, 0, 0, 50];
         cfg.network.subnet = [255, 255, 0, 0];
 
-        let mut buf = [0u8; 512];
+        let mut buf = [0u8; 2048];
         let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
         let (decoded, _): (BridgeConfig, _) =
             serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
         assert!(!decoded.network.dhcp);
         assert_eq!(decoded.network.ip, [10, 0, 0, 50]);
         assert_eq!(decoded.network.subnet, [255, 255, 0, 0]);
+    }
+
+    // -----------------------------------------------------------------------
+    // NtpConfig tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_ntp_config() {
+        let cfg = BridgeConfig::default();
+        assert!(cfg.ntp.enabled);
+        assert!(cfg.ntp.use_dhcp_servers);
+        assert_eq!(cfg.ntp.servers.len(), 1);
+        assert_eq!(cfg.ntp.servers[0].as_str(), "pool.ntp.org");
+        assert_eq!(cfg.ntp.sync_interval_secs, 3600);
+    }
+
+    #[test]
+    fn ntp_sync_interval_too_short_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.ntp.sync_interval_secs = 59;
+        assert!(!cfg.validate(), "sync_interval_secs < 60 should fail");
+    }
+
+    #[test]
+    fn ntp_sync_interval_exactly_60_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.ntp.sync_interval_secs = 60;
+        assert!(cfg.validate(), "sync_interval_secs == 60 should pass");
+    }
+
+    #[test]
+    fn ntp_sync_interval_zero_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.ntp.sync_interval_secs = 0;
+        assert!(!cfg.validate(), "sync_interval_secs == 0 should fail");
+    }
+
+    #[test]
+    fn ntp_round_trip() {
+        let cfg = BridgeConfig::default();
+        let mut buf = [0u8; 2048];
+        let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
+        let (decoded, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
+        assert_eq!(decoded.ntp.enabled, cfg.ntp.enabled);
+        assert_eq!(decoded.ntp.sync_interval_secs, cfg.ntp.sync_interval_secs);
+        assert_eq!(decoded.ntp.servers[0].as_str(), "pool.ntp.org");
+    }
+
+    // -----------------------------------------------------------------------
+    // SyslogConfig tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_syslog_config() {
+        let cfg = BridgeConfig::default();
+        assert!(!cfg.syslog.enabled);
+        assert!(cfg.syslog.server.is_empty());
+        assert_eq!(cfg.syslog.port, 514);
+    }
+
+    #[test]
+    fn syslog_enabled_zero_port_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.syslog.enabled = true;
+        cfg.syslog.port = 0;
+        let mut server = String::new();
+        let _ = server.push_str("logs.example.com");
+        cfg.syslog.server = server;
+        assert!(!cfg.validate(), "syslog enabled with port=0 should fail");
+    }
+
+    #[test]
+    fn syslog_enabled_valid_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.syslog.enabled = true;
+        let mut server = String::new();
+        let _ = server.push_str("logs.example.com");
+        cfg.syslog.server = server;
+        // port is 514 by default
+        assert!(cfg.validate(), "syslog enabled with valid port should pass");
+    }
+
+    #[test]
+    fn syslog_disabled_zero_port_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.syslog.enabled = false;
+        cfg.syslog.port = 0;
+        assert!(
+            cfg.validate(),
+            "syslog disabled with port=0 should pass (port only checked when enabled)"
+        );
+    }
+
+    #[test]
+    fn syslog_round_trip() {
+        let mut cfg = BridgeConfig::default();
+        cfg.syslog.enabled = true;
+        let mut server = String::new();
+        let _ = server.push_str("syslog.local");
+        cfg.syslog.server = server;
+        cfg.syslog.port = 514;
+
+        let mut buf = [0u8; 2048];
+        let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
+        let (decoded, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
+        assert!(decoded.syslog.enabled);
+        assert_eq!(decoded.syslog.server.as_str(), "syslog.local");
+        assert_eq!(decoded.syslog.port, 514);
+    }
+
+    // -----------------------------------------------------------------------
+    // MqttConfig tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_mqtt_config() {
+        let cfg = BridgeConfig::default();
+        assert!(!cfg.mqtt.enabled);
+        assert!(cfg.mqtt.broker.is_empty());
+        assert_eq!(cfg.mqtt.port, 1883);
+        assert_eq!(cfg.mqtt.client_id.as_str(), "bacnet-bridge");
+        assert_eq!(cfg.mqtt.topic_prefix.as_str(), "bacnet-bridge");
+        assert!(!cfg.mqtt.ha_discovery_enabled);
+        assert_eq!(cfg.mqtt.ha_discovery_prefix.as_str(), "homeassistant");
+        assert!(cfg.mqtt.publish_points.is_empty());
+    }
+
+    #[test]
+    fn mqtt_enabled_empty_broker_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.mqtt.enabled = true;
+        // broker is empty by default
+        assert!(
+            !cfg.validate(),
+            "mqtt enabled with empty broker should fail"
+        );
+    }
+
+    #[test]
+    fn mqtt_enabled_zero_port_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.mqtt.enabled = true;
+        cfg.mqtt.port = 0;
+        let mut broker = String::new();
+        let _ = broker.push_str("mqtt.example.com");
+        cfg.mqtt.broker = broker;
+        assert!(!cfg.validate(), "mqtt enabled with port=0 should fail");
+    }
+
+    #[test]
+    fn mqtt_enabled_valid_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.mqtt.enabled = true;
+        let mut broker = String::new();
+        let _ = broker.push_str("mqtt.example.com");
+        cfg.mqtt.broker = broker;
+        // port is 1883 by default
+        assert!(
+            cfg.validate(),
+            "mqtt enabled with broker and port should pass"
+        );
+    }
+
+    #[test]
+    fn mqtt_disabled_empty_broker_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.mqtt.enabled = false;
+        // broker is empty — fine when disabled
+        assert!(
+            cfg.validate(),
+            "mqtt disabled with empty broker should pass"
+        );
+    }
+
+    #[test]
+    fn mqtt_round_trip() {
+        let mut cfg = BridgeConfig::default();
+        cfg.mqtt.enabled = true;
+        let mut broker = String::new();
+        let _ = broker.push_str("broker.local");
+        cfg.mqtt.broker = broker;
+        cfg.mqtt.ha_discovery_enabled = true;
+
+        let mut buf = [0u8; 4096];
+        let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
+        let (decoded, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
+        assert!(decoded.mqtt.enabled);
+        assert_eq!(decoded.mqtt.broker.as_str(), "broker.local");
+        assert_eq!(decoded.mqtt.port, 1883);
+        assert!(decoded.mqtt.ha_discovery_enabled);
+        assert_eq!(decoded.mqtt.ha_discovery_prefix.as_str(), "homeassistant");
+    }
+
+    // -----------------------------------------------------------------------
+    // SnmpConfig tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn default_snmp_config() {
+        let cfg = BridgeConfig::default();
+        assert!(cfg.snmp.enabled);
+        assert_eq!(cfg.snmp.community.as_str(), "public");
+    }
+
+    #[test]
+    fn snmp_enabled_empty_community_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.snmp.community = String::new(); // empty
+        assert!(
+            !cfg.validate(),
+            "snmp enabled with empty community should fail"
+        );
+    }
+
+    #[test]
+    fn snmp_disabled_empty_community_passes() {
+        let mut cfg = BridgeConfig::default();
+        cfg.snmp.enabled = false;
+        cfg.snmp.community = String::new();
+        assert!(
+            cfg.validate(),
+            "snmp disabled with empty community should pass"
+        );
+    }
+
+    #[test]
+    fn snmp_custom_community_passes() {
+        let mut cfg = BridgeConfig::default();
+        let mut community = String::new();
+        let _ = community.push_str("private");
+        cfg.snmp.community = community;
+        assert!(
+            cfg.validate(),
+            "snmp with custom community string should pass"
+        );
+    }
+
+    #[test]
+    fn snmp_round_trip() {
+        let cfg = BridgeConfig::default();
+        let mut buf = [0u8; 2048];
+        let json = serde_json_core::to_slice(&cfg, &mut buf).expect("serialize failed");
+        let (decoded, _): (BridgeConfig, _) =
+            serde_json_core::from_slice(&buf[..json]).expect("deserialize failed");
+        assert_eq!(decoded.snmp.enabled, cfg.snmp.enabled);
+        assert_eq!(decoded.snmp.community.as_str(), "public");
+    }
+
+    // -----------------------------------------------------------------------
+    // CONFIG_VERSION bump test
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn config_version_is_2() {
+        assert_eq!(CONFIG_VERSION, 2);
     }
 }

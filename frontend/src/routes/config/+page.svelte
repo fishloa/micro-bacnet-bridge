@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { NetworkConfig, BacnetConfig } from '$lib/api';
+	import { points } from '$lib/stores';
+	import type { NetworkConfig, BacnetConfig, NtpConfig, SyslogConfig, MqttConfig, SnmpConfig, BacnetPoint } from '$lib/api';
+	import { pointKey } from '$lib/api';
 
 	let net: NetworkConfig = $state({
 		dhcp: true, ip: '', subnet: '', gateway: '', dns: '', hostname: ''
@@ -9,27 +11,65 @@
 	let bacnet: BacnetConfig = $state({
 		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 9600, maxMaster: 127
 	});
+	let ntp: NtpConfig = $state({
+		enabled: true, use_dhcp_servers: true, servers: ['pool.ntp.org', '', ''], sync_interval_secs: 3600
+	});
+	let syslog: SyslogConfig = $state({
+		enabled: false, server: '', port: 514
+	});
+	let mqtt: MqttConfig = $state({
+		enabled: false, broker: '', port: 1883, client_id: 'bacnet-bridge',
+		username: '', password: '', topic_prefix: 'bacnet',
+		ha_discovery_enabled: false, ha_discovery_prefix: 'homeassistant',
+		publish_points: []
+	});
+	let snmp: SnmpConfig = $state({
+		enabled: false, community: 'public'
+	});
+
 	let savingNetwork = $state(false);
 	let savingBacnet = $state(false);
+	let savingNtp = $state(false);
+	let savingSyslog = $state(false);
+	let savingMqtt = $state(false);
+	let savingSnmp = $state(false);
 	let savedMsg = $state('');
 	let loaded = $state(false);
 
+	// Points list for MQTT point selection
+	let allPoints: BacnetPoint[] = $state([]);
+
 	onMount(async () => {
-		net = await api.getNetworkConfig();
-		bacnet = await api.getBacnetConfig();
+		[net, bacnet, ntp, syslog, mqtt, snmp] = await Promise.all([
+			api.getNetworkConfig(),
+			api.getBacnetConfig(),
+			api.getNtpConfig(),
+			api.getSyslogConfig(),
+			api.getMqttConfig(),
+			api.getSnmpConfig(),
+		]);
+		// Pad NTP servers array to length 3 for the UI
+		while (ntp.servers.length < 3) ntp.servers = [...ntp.servers, ''];
 		loaded = true;
 	});
+
+	// Keep allPoints in sync with the store
+	points.subscribe(v => { allPoints = v; });
+
+	function showMsg(msg: string) {
+		savedMsg = msg;
+		setTimeout(() => savedMsg = '', 3000);
+	}
 
 	async function saveNetwork() {
 		savingNetwork = true;
 		try {
 			await api.setNetworkConfig(net);
-			savedMsg = 'Network config saved';
-		} catch (e) {
-			savedMsg = 'Failed to save network config';
+			showMsg('Network config saved');
+		} catch {
+			showMsg('Failed to save network config');
 		} finally {
 			savingNetwork = false;
-			setTimeout(() => savedMsg = '', 3000);
 		}
 	}
 
@@ -37,12 +77,69 @@
 		savingBacnet = true;
 		try {
 			await api.setBacnetConfig(bacnet);
-			savedMsg = 'BACnet config saved';
-		} catch (e) {
-			savedMsg = 'Failed to save BACnet config';
+			showMsg('BACnet config saved');
+		} catch {
+			showMsg('Failed to save BACnet config');
 		} finally {
 			savingBacnet = false;
-			setTimeout(() => savedMsg = '', 3000);
+		}
+	}
+
+	async function saveNtp() {
+		savingNtp = true;
+		try {
+			// Strip empty server entries before saving
+			const cfg: NtpConfig = { ...ntp, servers: ntp.servers.filter(s => s.trim() !== '') };
+			await api.setNtpConfig(cfg);
+			showMsg('NTP config saved');
+		} catch {
+			showMsg('Failed to save NTP config');
+		} finally {
+			savingNtp = false;
+		}
+	}
+
+	async function saveSyslog() {
+		savingSyslog = true;
+		try {
+			await api.setSyslogConfig(syslog);
+			showMsg('Syslog config saved');
+		} catch {
+			showMsg('Failed to save Syslog config');
+		} finally {
+			savingSyslog = false;
+		}
+	}
+
+	async function saveMqtt() {
+		savingMqtt = true;
+		try {
+			await api.setMqttConfig(mqtt);
+			showMsg('MQTT config saved');
+		} catch {
+			showMsg('Failed to save MQTT config');
+		} finally {
+			savingMqtt = false;
+		}
+	}
+
+	async function saveSnmp() {
+		savingSnmp = true;
+		try {
+			await api.setSnmpConfig(snmp);
+			showMsg('SNMP config saved');
+		} catch {
+			showMsg('Failed to save SNMP config');
+		} finally {
+			savingSnmp = false;
+		}
+	}
+
+	function togglePublishPoint(key: string) {
+		if (mqtt.publish_points.includes(key)) {
+			mqtt.publish_points = mqtt.publish_points.filter(k => k !== key);
+		} else {
+			mqtt.publish_points = [...mqtt.publish_points, key];
 		}
 	}
 </script>
@@ -62,6 +159,7 @@
 	</div>
 
 	<div class="config-grid">
+		<!-- Network Card -->
 		<div class="vui-card vui-animate-fade-in">
 			<div class="vui-section-header">Network</div>
 			<table class="form-table">
@@ -101,6 +199,7 @@
 			</div>
 		</div>
 
+		<!-- BACnet Card -->
 		<div class="vui-card vui-animate-fade-in">
 			<div class="vui-section-header">BACnet / MS/TP</div>
 			<table class="form-table">
@@ -144,6 +243,198 @@
 				</button>
 			</div>
 		</div>
+
+		<!-- NTP Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="vui-section-header">NTP / Time Sync</div>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<td class="field-label">Enabled</td>
+						<td><input type="checkbox" bind:checked={ntp.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+					</tr>
+					{#if ntp.enabled}
+						<tr>
+							<td class="field-label">Use DHCP Servers</td>
+							<td><input type="checkbox" bind:checked={ntp.use_dhcp_servers} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						</tr>
+						{#if !ntp.use_dhcp_servers}
+							<tr>
+								<td class="field-label">Server 1</td>
+								<td><input class="vui-input mono" bind:value={ntp.servers[0]} placeholder="pool.ntp.org" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Server 2</td>
+								<td><input class="vui-input mono" bind:value={ntp.servers[1]} placeholder="time.cloudflare.com" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Server 3</td>
+								<td><input class="vui-input mono" bind:value={ntp.servers[2]} placeholder="time.google.com" /></td>
+							</tr>
+						{/if}
+						<tr>
+							<td class="field-label">Sync Interval (s)</td>
+							<td><input class="vui-input mono" type="number" min="60" bind:value={ntp.sync_interval_secs} /></td>
+						</tr>
+					{/if}
+				</tbody>
+			</table>
+			<div class="card-actions">
+				<button class="vui-btn vui-btn-primary" onclick={saveNtp} disabled={savingNtp || !loaded}>
+					{savingNtp ? 'Saving...' : 'Save NTP'}
+				</button>
+			</div>
+		</div>
+
+		<!-- Syslog Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="vui-section-header">Syslog</div>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<td class="field-label">Enabled</td>
+						<td><input type="checkbox" bind:checked={syslog.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+					</tr>
+					{#if syslog.enabled}
+						<tr>
+							<td class="field-label">Server</td>
+							<td><input class="vui-input mono" bind:value={syslog.server} placeholder="syslog.example.com" /></td>
+						</tr>
+						<tr>
+							<td class="field-label">Port</td>
+							<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={syslog.port} /></td>
+						</tr>
+					{/if}
+				</tbody>
+			</table>
+			<div class="card-actions">
+				<button class="vui-btn vui-btn-primary" onclick={saveSyslog} disabled={savingSyslog || !loaded}>
+					{savingSyslog ? 'Saving...' : 'Save Syslog'}
+				</button>
+			</div>
+		</div>
+
+		<!-- SNMP Card -->
+		<div class="vui-card vui-animate-fade-in">
+			<div class="vui-section-header">SNMP</div>
+			<table class="form-table">
+				<tbody>
+					<tr>
+						<td class="field-label">Enabled</td>
+						<td><input type="checkbox" bind:checked={snmp.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+					</tr>
+					{#if snmp.enabled}
+						<tr>
+							<td class="field-label">Community String</td>
+							<td><input class="vui-input mono" bind:value={snmp.community} placeholder="public" /></td>
+						</tr>
+					{/if}
+				</tbody>
+			</table>
+			<div class="card-actions">
+				<button class="vui-btn vui-btn-primary" onclick={saveSnmp} disabled={savingSnmp || !loaded}>
+					{savingSnmp ? 'Saving...' : 'Save SNMP'}
+				</button>
+			</div>
+		</div>
+	</div>
+
+	<!-- MQTT Card — full width -->
+	<div class="vui-card vui-animate-fade-in" style="margin-top: var(--vui-space-lg);">
+		<div class="vui-section-header">MQTT</div>
+		<div class="mqtt-grid">
+			<div>
+				<table class="form-table">
+					<tbody>
+						<tr>
+							<td class="field-label">Enabled</td>
+							<td><input type="checkbox" bind:checked={mqtt.enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+						</tr>
+						{#if mqtt.enabled}
+							<tr>
+								<td class="field-label">Broker</td>
+								<td><input class="vui-input mono" bind:value={mqtt.broker} placeholder="mqtt.example.com" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Port</td>
+								<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={mqtt.port} /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Client ID</td>
+								<td><input class="vui-input mono" bind:value={mqtt.client_id} placeholder="bacnet-bridge" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Username</td>
+								<td><input class="vui-input" bind:value={mqtt.username} placeholder="(optional)" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Password</td>
+								<td><input class="vui-input" type="password" bind:value={mqtt.password} placeholder="(optional)" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">Topic Prefix</td>
+								<td><input class="vui-input mono" bind:value={mqtt.topic_prefix} placeholder="bacnet" /></td>
+							</tr>
+							<tr>
+								<td class="field-label">HA Auto-Discovery</td>
+								<td><input type="checkbox" bind:checked={mqtt.ha_discovery_enabled} style="width:18px;height:18px;accent-color:var(--vui-accent)" /></td>
+							</tr>
+							{#if mqtt.ha_discovery_enabled}
+								<tr>
+									<td class="field-label">HA Discovery Prefix</td>
+									<td><input class="vui-input mono" bind:value={mqtt.ha_discovery_prefix} placeholder="homeassistant" /></td>
+								</tr>
+							{/if}
+						{/if}
+					</tbody>
+				</table>
+			</div>
+
+			{#if mqtt.enabled && allPoints.length > 0}
+				<div class="mqtt-points">
+					<div class="mqtt-points-header">
+						<span class="field-label" style="font-size: var(--vui-text-sm); font-weight: var(--vui-font-medium); color: var(--vui-text-sub);">Publish Points</span>
+						<span class="vui-badge" style="font-size: var(--vui-text-xs);">
+							{mqtt.publish_points.length === 0 ? 'All points' : `${mqtt.publish_points.length} selected`}
+						</span>
+					</div>
+					<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); margin: 4px 0 8px;">
+						Leave all unchecked to publish every point. Check specific points to limit publishing.
+					</p>
+					<div class="points-checklist">
+						{#each allPoints as point (pointKey(point))}
+							{@const key = pointKey(point)}
+							<label class="point-check-row">
+								<input
+									type="checkbox"
+									checked={mqtt.publish_points.includes(key)}
+									onchange={() => togglePublishPoint(key)}
+									style="accent-color:var(--vui-accent)"
+								/>
+								<span class="vui-badge vui-badge-{point.objectType.startsWith('analog') ? 'info' : point.objectType.startsWith('binary') ? 'success' : 'purple'}" style="font-size: var(--vui-text-xs);">
+									{point.objectType.split('-').map(w => w[0].toUpperCase()).join('')}
+								</span>
+								<span style="font-size: var(--vui-text-sm);">{point.objectName}</span>
+							</label>
+						{/each}
+					</div>
+				</div>
+			{:else if mqtt.enabled}
+				<div class="mqtt-points">
+					<div class="mqtt-points-header">
+						<span class="field-label" style="font-size: var(--vui-text-sm); font-weight: var(--vui-font-medium); color: var(--vui-text-sub);">Publish Points</span>
+					</div>
+					<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); margin-top: 8px;">
+						No points loaded. Select a device from the dashboard to populate points, then return here to filter by point.
+					</p>
+				</div>
+			{/if}
+		</div>
+		<div class="card-actions">
+			<button class="vui-btn vui-btn-primary" onclick={saveMqtt} disabled={savingMqtt || !loaded}>
+				{savingMqtt ? 'Saving...' : 'Save MQTT'}
+			</button>
+		</div>
 	</div>
 </div>
 
@@ -183,5 +474,46 @@
 		padding-top: var(--vui-space-md);
 		border-top: 1px solid var(--vui-border);
 		margin-top: var(--vui-space-sm);
+	}
+	.mqtt-grid {
+		display: grid;
+		grid-template-columns: 1fr 1fr;
+		gap: var(--vui-space-lg);
+	}
+	@media (max-width: 800px) {
+		.mqtt-grid {
+			grid-template-columns: 1fr;
+		}
+	}
+	.mqtt-points {
+		border-left: 1px solid var(--vui-border);
+		padding-left: var(--vui-space-lg);
+	}
+	.mqtt-points-header {
+		display: flex;
+		align-items: center;
+		gap: var(--vui-space-sm);
+		margin-top: var(--vui-space-md);
+		margin-bottom: 4px;
+	}
+	.points-checklist {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		max-height: 320px;
+		overflow-y: auto;
+		padding-right: 4px;
+	}
+	.point-check-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 6px;
+		border-radius: var(--vui-radius-sm);
+		cursor: pointer;
+		font-size: var(--vui-text-sm);
+	}
+	.point-check-row:hover {
+		background: var(--vui-bg-hover, rgba(255,255,255,0.05));
 	}
 </style>
