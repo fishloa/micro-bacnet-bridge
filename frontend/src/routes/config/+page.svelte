@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { points } from '$lib/stores';
 	import type { NetworkConfig, BacnetConfig, NtpConfig, SyslogConfig, MqttConfig, SnmpConfig, BacnetPoint } from '$lib/api';
@@ -53,8 +53,9 @@
 		loaded = true;
 	});
 
-	// Keep allPoints in sync with the store
-	points.subscribe(v => { allPoints = v; });
+	// Keep allPoints in sync with the store; unsubscribe on component destroy.
+	const unsubscribePoints = points.subscribe(v => { allPoints = v; });
+	onDestroy(unsubscribePoints);
 
 	function showMsg(msg: string) {
 		savedMsg = msg;
@@ -412,7 +413,7 @@
 									style="accent-color:var(--vui-accent)"
 								/>
 								<span class="vui-badge vui-badge-{point.objectType.startsWith('analog') ? 'info' : point.objectType.startsWith('binary') ? 'success' : 'purple'}" style="font-size: var(--vui-text-xs);">
-									{point.objectType.split('-').map(w => w[0].toUpperCase()).join('')}
+									{point.objectType.split('-').filter(w => w.length > 0).map(w => w[0].toUpperCase()).join('')}
 								</span>
 								<span style="font-size: var(--vui-text-sm);">{point.objectName}</span>
 							</label>

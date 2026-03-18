@@ -173,15 +173,20 @@ fn decode_remaining_length(data: &[u8], pos: &mut usize) -> Result<usize, Decode
     let mut value: usize = 0;
     loop {
         let byte = read_u8(data, pos)?;
-        value += (byte & 0x7F) as usize * multiplier;
+        value = value
+            .checked_add((byte & 0x7F) as usize * multiplier)
+            .ok_or(DecodeError::InvalidData)?;
+        if byte & 0x80 == 0 {
+            break;
+        }
+        // MQTT spec §2.2.3: remaining length is at most 4 bytes.
+        // After processing 4 bytes with the MSB set the multiplier would be
+        // 128^4; if we're about to exceed that limit, the packet is malformed.
         multiplier = multiplier
             .checked_mul(128)
             .ok_or(DecodeError::InvalidData)?;
-        if multiplier > 128 * 128 * 128 * 128 {
+        if multiplier >= 128 * 128 * 128 * 128 {
             return Err(DecodeError::InvalidData);
-        }
-        if byte & 0x80 == 0 {
-            break;
         }
     }
     Ok(value)
@@ -868,5 +873,47 @@ mod tests {
         // Verify it looks like a PUBLISH with retain
         assert_eq!(pkt_buf[0], 0x31); // 0x30 | RETAIN bit
         assert!(n > payload_len);
+    }
+
+    // -----------------------------------------------------------------------
+    // Regression: decode_remaining_length must reject 5-byte sequences
+    // (MQTT spec §2.2.3 limits remaining-length to 4 bytes)
+    // -----------------------------------------------------------------------
+
+    /// A 5-byte continuation sequence (all high bits set) must return
+    /// `InvalidData`, not loop and read a fifth byte.
+    ///
+    /// Regression: the original check `multiplier > 128^4` used `>` instead
+    /// of `>=`, so after reading 4 MSB-set bytes the multiplier equalled
+    /// 128^4 exactly and the check was `128^4 > 128^4` = false, allowing
+    /// a fifth byte to be consumed.
+    #[test]
+    fn decode_remaining_length_rejects_5_byte_sequence() {
+        // PUBLISH packet with 5 continuation bytes in the remaining-length field.
+        // 0xFF 0xFF 0xFF 0xFF 0x01 — the 4th byte still has MSB set (0xFF).
+        let malformed = [0x30u8, 0xFF, 0xFF, 0xFF, 0xFF, 0x01, 0x00];
+        let result = decode_packet_type(&malformed);
+        assert_eq!(result, Err(DecodeError::InvalidData));
+    }
+
+    /// 4-byte max remaining-length (268,435,455 = 0x0FFFFFFF) must decode
+    /// correctly: 0xFF 0xFF 0xFF 0x7F.
+    #[test]
+    fn decode_remaining_length_max_4_byte_value() {
+        // Fixed header byte (PUBLISH = 0x30) + 4-byte remaining length + 1 payload
+        // 0xFF 0xFF 0xFF 0x7F = 268,435,455
+        let data = [0x30u8, 0xFF, 0xFF, 0xFF, 0x7F];
+        let (ptype, remaining) = decode_packet_type(&data).unwrap();
+        assert_eq!(ptype, PACKET_TYPE_PUBLISH);
+        assert_eq!(remaining, 268_435_455);
+    }
+
+    /// Single-byte max (127) must not read a second byte.
+    #[test]
+    fn decode_remaining_length_max_single_byte() {
+        let data = [0x30u8, 0x7F]; // PUBLISH, remaining=127
+        let (ptype, remaining) = decode_packet_type(&data).unwrap();
+        assert_eq!(ptype, PACKET_TYPE_PUBLISH);
+        assert_eq!(remaining, 127);
     }
 }

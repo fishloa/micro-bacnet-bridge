@@ -444,7 +444,12 @@ fn format_value(value: Option<&BacnetValue>) -> String<32> {
             let _ = write!(s, "{}", v);
         }
         Some(BacnetValue::ObjectIdentifier(oid)) => {
-            let _ = write!(s, "{}:{}", oid.object_type.code(), oid.instance);
+            let _ = write!(
+                s,
+                "{}:{}",
+                bridge_core::bacnet::ObjectType::code(oid.object_type),
+                oid.instance
+            );
         }
     }
     s
@@ -511,15 +516,10 @@ async fn read_at_least(
 
 trait ObjectTypeExt {
     fn to_str(self) -> &'static str;
-    fn code(self) -> u16;
 }
 
 impl ObjectTypeExt for bridge_core::bacnet::ObjectType {
     fn to_str(self) -> &'static str {
         object_type_str(self)
-    }
-
-    fn code(self) -> u16 {
-        bridge_core::bacnet::ObjectType::code(self)
     }
 }

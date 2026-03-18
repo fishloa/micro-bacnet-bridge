@@ -577,8 +577,10 @@ pub fn encode_get_response(
     // Structure: SEQUENCE { version, community, GetResponse-PDU { req_id, err_status, err_index, VarBindList } }
 
     // We build from the inside out into a scratch buffer, then wrap.
-    // Use a fixed-size stack scratch buffer.
-    const SCRATCH: usize = 1500;
+    // SNMP over UDP is bounded by the MTU (~1472 bytes payload); 512 bytes is
+    // sufficient for the system MIB OIDs this agent serves. Total stack usage:
+    // 3 × SCRATCH = 1536 bytes.
+    const SCRATCH: usize = 512;
     let mut scratch = [0u8; SCRATCH];
     let mut p = 0usize;
 
@@ -1353,5 +1355,68 @@ mod tests {
             encode_get_response(&mut buf, 1, b"public", 0, 0, &[vb]).unwrap_err(),
             EncodeError::BufferTooSmall
         );
+    }
+
+    // ---- Regression: SCRATCH buffer reduced from 1500 → 512 ----------------
+    //
+    // Verify that all standard system MIB OIDs can be encoded into a response
+    // within the reduced scratch budget. A typical sysDescr response is ~80
+    // bytes — well within 512. An 8-binding response with all enterprise OIDs
+    // must also fit.
+
+    #[test]
+    fn encode_all_bindings_fits_in_reduced_scratch() {
+        // Build a response with all 9 known OIDs as Counter32/Gauge32/TimeTicks
+        let mut bindings: [Option<VarBind>; 9] = Default::default();
+        let oid_list: &[&[u32]] = &[
+            OID_SYS_DESCR,
+            OID_SYS_UPTIME,
+            OID_SYS_CONTACT,
+            OID_SYS_NAME,
+            OID_MSTP_FRAMES_SENT,
+            OID_MSTP_FRAMES_RECV,
+            OID_MSTP_TOKEN_LOSSES,
+            OID_IPC_DROP_COUNT,
+            OID_BACNET_DEVICES_DISCOVERED,
+        ];
+        for (i, &oid_slice) in oid_list.iter().enumerate() {
+            let mut oid: Vec<u32, 16> = Vec::new();
+            for &s in oid_slice {
+                oid.push(s).unwrap();
+            }
+            bindings[i] = Some(VarBind {
+                oid,
+                value: SnmpValue::Counter32(i as u32),
+            });
+        }
+        let vbs: heapless::Vec<VarBind, 9> = bindings.iter().filter_map(|b| b.clone()).collect();
+
+        let mut buf = [0u8; 512];
+        let n = encode_get_response(&mut buf, 1, b"public", 0, 0, vbs.as_slice()).unwrap();
+        assert!(n > 0, "response must be non-empty");
+        assert!(n <= 512, "response must fit within 512-byte output buffer");
+        assert_eq!(buf[0], TAG_SEQUENCE, "outer tag must be SEQUENCE");
+    }
+
+    /// sysDescr with a 64-byte description fits within the reduced scratch.
+    #[test]
+    fn encode_sys_descr_64_bytes_fits() {
+        let mut oid: Vec<u32, 16> = Vec::new();
+        for &s in OID_SYS_DESCR {
+            oid.push(s).unwrap();
+        }
+        let mut val_bytes: Vec<u8, 64> = Vec::new();
+        // 64-byte description string
+        for b in b"BACnet Bridge v0.2.0 (Icomb Place) - RP2040 W5500-EVB-Pico-PoE" {
+            val_bytes.push(*b).unwrap();
+        }
+        let vb = VarBind {
+            oid,
+            value: SnmpValue::OctetString(val_bytes),
+        };
+        let mut buf = [0u8; 256];
+        let n = encode_get_response(&mut buf, 99, b"public", 0, 0, &[vb]).unwrap();
+        assert!(n > 0);
+        assert_eq!(buf[0], TAG_SEQUENCE);
     }
 }

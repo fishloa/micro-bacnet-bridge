@@ -327,8 +327,13 @@ impl BridgeConfig {
         if self.ntp.sync_interval_secs < 60 {
             return false;
         }
-        if self.syslog.enabled && self.syslog.port == 0 {
-            return false;
+        if self.syslog.enabled {
+            if self.syslog.port == 0 {
+                return false;
+            }
+            if self.syslog.server.is_empty() {
+                return false;
+            }
         }
         if self.mqtt.enabled {
             if self.mqtt.port == 0 {
@@ -595,6 +600,20 @@ mod tests {
         assert!(
             cfg.validate(),
             "syslog disabled with port=0 should pass (port only checked when enabled)"
+        );
+    }
+
+    /// Regression: enabling syslog with an empty server hostname must fail
+    /// validation even when the port is valid.
+    #[test]
+    fn syslog_enabled_empty_server_fails() {
+        let mut cfg = BridgeConfig::default();
+        cfg.syslog.enabled = true;
+        cfg.syslog.server = String::new(); // empty — no server configured
+        cfg.syslog.port = 514;
+        assert!(
+            !cfg.validate(),
+            "syslog enabled with empty server must fail validation"
         );
     }
 
