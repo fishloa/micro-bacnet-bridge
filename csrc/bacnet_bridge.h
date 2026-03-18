@@ -57,12 +57,11 @@ extern "C" {
 /**
  * @brief Maximum BACnet NPDU payload length carried over IPC.
  *
- * MS/TP limits data to 501 bytes (MSTP_FRAME_NPDU_MAX).  We round up to 480
- * to stay well within the RP2040 SRAM budget while still accommodating the
- * largest valid MS/TP frames.  BACnet/IP BVLCs that exceed this size will be
- * fragmented at a higher layer in a future revision.
+ * MS/TP limits data to 501 bytes (MSTP_FRAME_NPDU_MAX per BACnet standard).
+ * This value matches the BACnet standard maximum exactly to avoid silent PDU
+ * truncation on MS/TP frames that use the full payload capacity.
  */
-#define BACNET_PDU_MAX_DATA 480u
+#define BACNET_PDU_MAX_DATA 501u
 
 /**
  * @brief Single PDU entry carried through the inter-core ring buffer.
@@ -145,6 +144,17 @@ extern ipc_ring_t mstp_to_ip_ring;
 extern ipc_ring_t ip_to_mstp_ring;
 
 /* --------------------------------------------------------------------------
+ * Watchdog heartbeat
+ *
+ * core1_heartbeat is incremented once per Core 1 main-loop iteration.
+ * Core 0 monitors it to detect a stalled Core 1 (see firmware/src/core1.rs).
+ * Allocated in Rust (no_mangle static); declared extern here for C access.
+ * -------------------------------------------------------------------------- */
+
+/** Heartbeat counter incremented by Core 1 each iteration of its main loop. */
+extern volatile uint32_t core1_heartbeat;
+
+/* --------------------------------------------------------------------------
  * ipc_c.c — IPC ring buffer operations
  * -------------------------------------------------------------------------- */
 
@@ -218,6 +228,16 @@ uint8_t mstp_port_get_byte(void);
  * @param byte  The byte to transmit.
  */
 void mstp_port_put_byte(uint8_t byte);
+
+/**
+ * @brief Return the raw microsecond timestamp (lower 32 bits of TIMER_TIMERAWL).
+ *
+ * Used by silence_timer_ms() / silence_timer_reset() for wrap-safe elapsed
+ * time computation.  Rolls over at UINT32_MAX (~71 minutes).
+ *
+ * @return Microseconds since boot.
+ */
+uint32_t mstp_port_timer_us(void);
 
 /**
  * @brief Return the current millisecond timestamp.

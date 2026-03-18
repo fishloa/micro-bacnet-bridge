@@ -164,6 +164,12 @@ void mstp_port_init(uint32_t baud_rate)
     uint32_t ibrd;
     uint32_t fbrd;
 
+    /* H6: Guard against division by zero and unreasonably large baud rates.
+     * Any caller passing 0 or a value above 115200 gets a safe 38400 default. */
+    if (baud_rate == 0u || baud_rate > 115200u) {
+        baud_rate = 38400u; /* safe default */
+    }
+
     /* -----------------------------------------------------------------------
      * 1. Release peripherals from reset.
      * The Rust embassy-rp initialisation on Core 0 has already released the
@@ -344,21 +350,36 @@ void mstp_port_put_byte(uint8_t byte)
  * -------------------------------------------------------------------------- */
 
 /**
- * @brief Return the current millisecond timestamp.
+ * @brief Return the raw microsecond timestamp from the RP2040 TIMER peripheral.
  *
  * The RP2040 TIMER peripheral contains a 64-bit free-running counter clocked
  * at 1 MHz.  The lower 32 bits (TIMERAWL) give a microsecond count that rolls
- * over after ~71 minutes.  Dividing by 1000 yields milliseconds with
- * approximately 1 ms resolution.
+ * over after ~71.6 minutes.  This raw value should be used for silence-timer
+ * arithmetic (H1 fix): compute elapsed time as
+ *   `(now_us - start_us) / 1000u`
+ * which correctly handles unsigned 32-bit wraparound.
  *
- * The MS/TP silence timer (SilenceTimer callback) uses this value to measure
- * inter-frame gaps.  The maximum meaningful gap is Tno_token = 500 ms, well
- * within the 32-bit microsecond range.
+ * @return Microseconds since boot (wraps at UINT32_MAX ≈ 71 minutes).
+ */
+__attribute__((section(".time_critical")))
+uint32_t mstp_port_timer_us(void)
+{
+    return REG(TIMER_BASE, TIMER_TIMERAWL_OFFSET);
+}
+
+/**
+ * @brief Return the current millisecond timestamp.
+ *
+ * Convenience wrapper over mstp_port_timer_us().  Note that dividing the
+ * raw microsecond counter by 1000 before storing a start timestamp loses
+ * sub-millisecond precision and creates a wrap-boundary issue at the
+ * modulo-1000 boundary — use mstp_port_timer_us() for elapsed-time
+ * calculations in the silence timer (see bacnet_port.c).
  *
  * @return Milliseconds since boot (modulo ~71 minutes at microsecond origin).
  */
 __attribute__((section(".time_critical")))
 uint32_t mstp_port_timer_ms(void)
 {
-    return REG(TIMER_BASE, TIMER_TIMERAWL_OFFSET) / 1000u;
+    return mstp_port_timer_us() / 1000u;
 }

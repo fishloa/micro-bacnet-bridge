@@ -25,6 +25,22 @@
 
 #include "bacnet_bridge.h"
 
+/*
+ * Compile-time struct size assertion.
+ *
+ * bacnet_pdu_t layout on Cortex-M0+ (4-byte pointer ABI, packed to natural alignment):
+ *   source_net(2) + source_mac(7) + source_mac_len(1)         = 10 bytes @ offset 0
+ *   dest_net(2) [+0 pad, aligned to 2] + dest_mac(7) + dest_mac_len(1) = 10 bytes @ offset 10
+ *   pdu_type(1) + [1 pad byte] + data_len(2) [aligned to 2]  =  4 bytes @ offset 20
+ *   data[501]                                                  = 501 bytes @ offset 24
+ *   + 1 trailing pad byte to round total to struct alignment (2)
+ *   Total = 526 bytes.
+ *
+ * This must match the Rust BacnetPdu compile-time assertion in bridge-core/src/ipc.rs.
+ */
+_Static_assert(sizeof(bacnet_pdu_t) == 526,
+               "bacnet_pdu_t size mismatch with Rust BacnetPdu — update both assertions");
+
 /* Freestanding memcpy — no libc available on bare-metal Cortex-M0+. */
 static void ipc_memcpy(void *dst, const void *src, uint32_t n) {
     uint8_t *d = (uint8_t *)dst;

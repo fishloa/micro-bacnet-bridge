@@ -15,8 +15,8 @@ use core::ptr::{read_volatile, write_volatile};
 // ---------------------------------------------------------------------------
 
 /// Maximum APDU size supported by the bridge.
-/// BACnet/IP supports up to 1497 bytes but we budget for MS/TP max of 480.
-pub const PDU_MAX_DATA: usize = 480;
+/// MS/TP maximum NPDU payload is 501 bytes (MSTP_FRAME_NPDU_MAX per BACnet standard).
+pub const PDU_MAX_DATA: usize = 501;
 
 /// A BACnet PDU passed between Core 0 and Core 1 via the shared ring buffer.
 ///
@@ -44,6 +44,18 @@ pub struct BacnetPdu {
     pub data: [u8; PDU_MAX_DATA],
 }
 
+// Compile-time size check: BacnetPdu must match the C bacnet_pdu_t.
+// Layout (repr(C), align=2):
+//   source_net(2@0) + source_mac(7@2) + source_mac_len(1@9)
+//   dest_net(2@10) + dest_mac(7@12) + dest_mac_len(1@19)
+//   pdu_type(1@20) + [1 pad byte@21] + data_len(2@22) + data(501@24)
+//   + [1 trailing pad byte@525 for struct alignment to 2]
+//   = 526 bytes total.
+const _: () = assert!(
+    core::mem::size_of::<BacnetPdu>() == 526,
+    "BacnetPdu size mismatch with C bacnet_pdu_t"
+);
+
 // Manual Debug to avoid printing 480 bytes
 impl core::fmt::Debug for BacnetPdu {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -60,6 +72,9 @@ impl core::fmt::Debug for BacnetPdu {
 
 impl PartialEq for BacnetPdu {
     fn eq(&self, other: &Self) -> bool {
+        // Clamp data_len to PDU_MAX_DATA to avoid a panic on malformed/uninitialized data.
+        let len_a = (self.data_len as usize).min(PDU_MAX_DATA);
+        let len_b = (other.data_len as usize).min(PDU_MAX_DATA);
         self.source_net == other.source_net
             && self.source_mac == other.source_mac
             && self.source_mac_len == other.source_mac_len
@@ -68,7 +83,7 @@ impl PartialEq for BacnetPdu {
             && self.dest_mac_len == other.dest_mac_len
             && self.pdu_type == other.pdu_type
             && self.data_len == other.data_len
-            && self.data[..self.data_len as usize] == other.data[..other.data_len as usize]
+            && self.data[..len_a] == other.data[..len_b]
     }
 }
 
@@ -101,17 +116,25 @@ impl Default for BacnetPdu {
 
 /// Lock-free SPSC ring buffer holding up to `N` `BacnetPdu` items.
 ///
-/// `N` must be a power of two for the index-masking optimisation to work,
-/// though this is not enforced at compile time — callers should choose powers
-/// of two (e.g. 4, 8, 16).
+/// `N` must be a power of two. Head and tail are monotonically-incrementing
+/// `u32` counters (never reset, wrap via `u32::wrapping_add`). This matches
+/// the C-side `ipc_ring_t` convention exactly:
+///
+/// - **Full**  when `head.wrapping_sub(tail) >= N`
+/// - **Empty** when `head == tail`
+/// - **Slot**  index = `index % N` (or `index & (N-1)` for power-of-two N)
+///
+/// This avoids the classic "wasted slot" off-by-one that arises from the
+/// `(head+1) % N == tail` full-condition used in some ring buffer designs,
+/// and ensures the C and Rust implementations agree on occupancy.
 ///
 /// `repr(C)` ensures the field layout matches the C `ipc_ring_t`:
 /// `head` (u32), `tail` (u32), `buffer` ([bacnet_pdu_t; N])`.
 #[repr(C)]
 pub struct RingBuffer<const N: usize> {
-    /// Write index (producer increments). Volatile access required.
+    /// Write index (producer increments monotonically). Volatile access required.
     head: u32,
-    /// Read index (consumer increments). Volatile access required.
+    /// Read index (consumer increments monotonically). Volatile access required.
     tail: u32,
     /// Storage for PDUs.
     data: [BacnetPdu; N],
@@ -140,54 +163,68 @@ impl<const N: usize> RingBuffer<N> {
     }
 
     /// Returns true if the buffer is full and cannot accept another item.
+    ///
+    /// Uses the C-compatible monotonic convention: full when
+    /// `(head - tail) >= N`, which gives a true capacity of N items.
     #[inline]
     pub fn is_full(&self) -> bool {
         let h = unsafe { read_volatile(&self.head) };
         let t = unsafe { read_volatile(&self.tail) };
-        (h.wrapping_add(1)) & (N as u32 - 1) == t
+        h.wrapping_sub(t) >= N as u32
     }
 
     /// Push a PDU into the buffer (producer side).
     ///
     /// Returns `true` on success, `false` if the buffer is full.
+    ///
+    /// A memory fence (Release) is issued after writing the data and before
+    /// advancing the head index, ensuring the consumer on the other core
+    /// never reads a slot whose data has not yet been written.
     pub fn push(&mut self, pdu: &BacnetPdu) -> bool {
         let h = unsafe { read_volatile(&self.head) };
         let t = unsafe { read_volatile(&self.tail) };
-        let next_h = h.wrapping_add(1) & (N as u32 - 1);
-        if next_h == t {
+        if h.wrapping_sub(t) >= N as u32 {
             return false; // full
         }
-        self.data[h as usize] = *pdu;
-        // Write head last (release semantics via volatile write)
-        unsafe { write_volatile(&mut self.head, next_h) };
+        let slot = (h as usize) % N;
+        self.data[slot] = *pdu;
+        // Release fence: data write must be visible before head update.
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Release);
+        // Advance head monotonically (unsigned overflow is defined and harmless).
+        unsafe { write_volatile(&mut self.head, h.wrapping_add(1)) };
         true
     }
 
     /// Pop a PDU from the buffer (consumer side).
     ///
     /// Returns `Some(pdu)` if an item was available, `None` if empty.
+    ///
+    /// An Acquire fence is issued after observing a non-empty head and before
+    /// reading the data slot, ensuring that any data written by the producer
+    /// is fully visible on this core before we copy it.
     pub fn pop(&mut self) -> Option<BacnetPdu> {
         let h = unsafe { read_volatile(&self.head) };
         let t = unsafe { read_volatile(&self.tail) };
         if h == t {
             return None; // empty
         }
-        let pdu = self.data[t as usize];
-        let next_t = t.wrapping_add(1) & (N as u32 - 1);
-        // Advance tail last (release semantics via volatile write)
-        unsafe { write_volatile(&mut self.tail, next_t) };
+        // Acquire fence: head read must happen-before the data read below.
+        core::sync::atomic::fence(core::sync::atomic::Ordering::Acquire);
+        let slot = (t as usize) % N;
+        let pdu = self.data[slot];
+        // Advance tail monotonically.
+        unsafe { write_volatile(&mut self.tail, t.wrapping_add(1)) };
         Some(pdu)
     }
 
     /// Return the number of items currently in the buffer.
+    ///
+    /// Computed as `head.wrapping_sub(tail)` — correct even across `u32`
+    /// overflow because both indices increment at the same rate.
     pub fn len(&self) -> usize {
-        let h = unsafe { read_volatile(&self.head) } as usize;
-        let t = unsafe { read_volatile(&self.tail) } as usize;
-        if h >= t {
-            h - t
-        } else {
-            N - t + h
-        }
+        let h = unsafe { read_volatile(&self.head) };
+        let t = unsafe { read_volatile(&self.tail) };
+        h.wrapping_sub(t) as usize
     }
 }
 
@@ -237,20 +274,23 @@ mod tests {
 
     #[test]
     fn fill_and_drain() {
-        // RingBuffer<4> can hold 3 items (capacity = N-1 due to full/empty distinction)
+        // RingBuffer<4> holds exactly 4 items (capacity = N with monotonic-index convention).
         let mut rb: RingBuffer<4> = RingBuffer::new();
         assert!(rb.push(&make_pdu(1, 0x01)));
         assert!(rb.push(&make_pdu(2, 0x02)));
         assert!(rb.push(&make_pdu(3, 0x03)));
+        assert!(rb.push(&make_pdu(4, 0x04)));
         assert!(rb.is_full());
-        assert!(!rb.push(&make_pdu(4, 0x04))); // should fail
+        assert!(!rb.push(&make_pdu(5, 0x05))); // should fail — buffer full
 
         let p1 = rb.pop().unwrap();
         let p2 = rb.pop().unwrap();
         let p3 = rb.pop().unwrap();
+        let p4 = rb.pop().unwrap();
         assert_eq!(p1.pdu_type, 1);
         assert_eq!(p2.pdu_type, 2);
         assert_eq!(p3.pdu_type, 3);
+        assert_eq!(p4.pdu_type, 4);
         assert!(rb.is_empty());
         assert!(rb.pop().is_none());
     }
@@ -264,33 +304,39 @@ mod tests {
     #[test]
     fn wraps_around_correctly() {
         let mut rb: RingBuffer<4> = RingBuffer::new();
-        // Fill, drain, fill again — exercises index wrap
-        for i in 0..3u8 {
-            rb.push(&make_pdu(i, i));
+        // Fill all 4 slots, drain, fill again — exercises index wrap past N.
+        for i in 0..4u8 {
+            assert!(rb.push(&make_pdu(i, i)));
         }
-        for _ in 0..3 {
+        assert!(rb.is_full());
+        for _ in 0..4 {
             rb.pop().unwrap();
         }
-        // Now fill again past the original end
-        for i in 10..13u8 {
-            rb.push(&make_pdu(i, i));
+        assert!(rb.is_empty());
+        // Head and tail are now both 4 (not zero); slots reuse correctly.
+        for i in 10..14u8 {
+            assert!(rb.push(&make_pdu(i, i)));
         }
+        assert!(rb.is_full());
         let p = rb.pop().unwrap();
         assert_eq!(p.pdu_type, 10);
         let p = rb.pop().unwrap();
         assert_eq!(p.pdu_type, 11);
         let p = rb.pop().unwrap();
         assert_eq!(p.pdu_type, 12);
+        let p = rb.pop().unwrap();
+        assert_eq!(p.pdu_type, 13);
         assert!(rb.is_empty());
     }
 
     #[test]
     fn push_returns_false_when_full() {
         let mut rb: RingBuffer<2> = RingBuffer::new();
-        // Capacity of RingBuffer<2> = 1 item
+        // Capacity of RingBuffer<2> = 2 items (monotonic-index convention).
         assert!(rb.push(&make_pdu(1, 1)));
+        assert!(rb.push(&make_pdu(2, 2)));
         assert!(rb.is_full());
-        assert!(!rb.push(&make_pdu(2, 2)));
+        assert!(!rb.push(&make_pdu(3, 3)));
     }
 
     #[test]

@@ -35,6 +35,23 @@
  */
 
 /* --------------------------------------------------------------------------
+ * RP2040 UART1 register access (duplicated subset from mstp_port.c)
+ *
+ * These are the minimal definitions needed by RS485_Send_Frame to poll the
+ * UART flag register before de-asserting the RS-485 driver-enable pin (C4).
+ * Keep in sync with mstp_port.c.
+ * -------------------------------------------------------------------------- */
+
+/** UART1 register base address. */
+#define UART1_BASE      0x40038000u
+/** UART flag register offset. */
+#define UART_FR_OFFSET  0x018u
+/** UART busy bit: set while the UART shift register is transmitting. */
+#define UART_FR_BUSY    (1u << 3)
+/** Register access macro. */
+#define REG(base, off)  (*(volatile uint32_t *)((base) + (off)))
+
+/* --------------------------------------------------------------------------
  * Timer platform hooks
  *
  * bacnet-stack/src/bacnet/basic/sys/mstimer.c (and similar) calls
@@ -82,8 +99,21 @@ uint32_t timer_milliseconds(void)
  * field signature matches these prototypes once headers are available.
  * -------------------------------------------------------------------------- */
 
-/** Timestamp (ms) of the last RS-485 bus activity. */
-static volatile uint32_t silence_timer_start_ms = 0u;
+/** Timestamp (raw microseconds from TIMER_TIMERAWL) of the last RS-485 bus activity.
+ *
+ * H1: Store raw microseconds, not milliseconds.  mstp_port_timer_ms() divides
+ * the 1 MHz counter by 1000, so the quotient wraps every ~71 minutes but the
+ * wrap boundary is not aligned to any fixed epoch.  Subtracting two wrapped
+ * millisecond values can give a large positive number or even underflow if the
+ * timer crossed the 0xFFFFFFFF→0 boundary between the reset and the read.
+ *
+ * Storing microseconds and converting the *difference* to milliseconds avoids
+ * this: (now_us - start_us) uses unsigned 32-bit subtraction which is defined
+ * to wrap at 2^32 and always gives the correct positive elapsed time as long
+ * as the elapsed interval is < 2^32 µs (~71 minutes), which is guaranteed by
+ * the MS/TP timer context (max Tno_token = 500 ms).
+ */
+static volatile uint32_t silence_timer_start_us = 0u;
 
 /**
  * @brief Return the number of milliseconds since the last RS-485 activity.
@@ -96,12 +126,13 @@ static volatile uint32_t silence_timer_start_ms = 0u;
  */
 uint32_t silence_timer_ms(void *pArg)
 {
-    uint32_t now;
+    uint32_t now_us;
     (void)pArg;
 
-    now = mstp_port_timer_ms();
-    /* Unsigned subtraction handles timer wraparound correctly. */
-    return now - silence_timer_start_ms;
+    /* Read the raw 1 MHz counter (microseconds since boot). */
+    now_us = mstp_port_timer_us();
+    /* Unsigned subtraction + divide: correct across any 32-bit wraparound. */
+    return (now_us - silence_timer_start_us) / 1000u;
 }
 
 /**
@@ -115,7 +146,7 @@ uint32_t silence_timer_ms(void *pArg)
 void silence_timer_reset(void *pArg)
 {
     (void)pArg;
-    silence_timer_start_ms = mstp_port_timer_ms();
+    silence_timer_start_us = mstp_port_timer_us();
 }
 
 /* --------------------------------------------------------------------------
@@ -145,6 +176,11 @@ void RS485_Send_Frame(void *mstp_port, const uint8_t *buffer, uint16_t nbytes)
 {
     uint16_t i;
 
+    /* WARNING: Must drain RX FIFO during TX to prevent overflow at 76800 baud.
+     * FIFO is only 32 bytes deep = 4.2ms at 76800. RS485_Check_UART_Data must
+     * be called between frames; during transmission the RX side is disabled
+     * by DE=1 on the SP3485, but late echoes or reflections can still fill it. */
+
     /* Suppress unused-parameter warning until full integration. */
     (void)mstp_port;
 
@@ -160,14 +196,32 @@ void RS485_Send_Frame(void *mstp_port, const uint8_t *buffer, uint16_t nbytes)
         mstp_port_put_byte(buffer[i]);
     }
 
-    /*
-     * TODO(phase-4): Wait for the UART shift register to empty (UART_FR_BUSY
-     * clear) before de-asserting DE.  The register address is defined in
-     * mstp_port.c; expose a mstp_port_tx_complete() helper if needed.
-     * For now, the loop above is sufficient for initial bring-up.
+    /* C4: Wait for the TX shift register to drain completely.
+     *
+     * After mstp_port_put_byte() returns for the last byte, the byte has
+     * entered the TX FIFO but the UART shift register may still be clocking
+     * out the previous byte.  De-asserting DE while UART_FR_BUSY is set cuts
+     * off the last bits of the frame, corrupting the stop bit seen by all
+     * remote nodes.
+     *
+     * UART_FR_BUSY (bit 3) is cleared only once the shift register is idle
+     * and the stop bit has been fully transmitted.
      */
+    while (REG(UART1_BASE, UART_FR_OFFSET) & UART_FR_BUSY) {
+        /* spin — typically < 1 bit-time at the configured baud rate */
+    }
 
-    /* De-assert DE to return to receive mode. */
+    /* Turnaround delay: 2 bit-times at maximum supported baud (76800) gives
+     * ~26 µs headroom for SP3485 propagation delay before we stop driving
+     * the bus.  Ten NOPs at 133 MHz = ~75 ns each ≈ 750 ns total, which is
+     * conservative but safe.
+     */
+    {
+        volatile uint32_t delay = 10u;
+        while (delay--) { __asm__ volatile("nop"); }
+    }
+
+    /* Now safe to switch to receive mode. */
     mstp_port_set_direction(false);
 }
 
@@ -192,6 +246,11 @@ void RS485_Send_Frame(void *mstp_port, const uint8_t *buffer, uint16_t nbytes)
  */
 void RS485_Check_UART_Data(void *mstp_port)
 {
+    /* WARNING: Must drain RX FIFO during TX to prevent overflow at 76800 baud.
+     * The PL011 FIFO is only 32 bytes deep = ~4.2 ms at 76800 baud.
+     * If this function is not called frequently enough while RS485_Send_Frame
+     * is blocking, received bytes will be silently discarded by the UART. */
+
     /* TODO(phase-4): implement byte-feed loop using typed mstp_port_struct_t. */
     (void)mstp_port;
 }

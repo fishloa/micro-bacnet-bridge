@@ -101,7 +101,8 @@ static uint8_t mstp_output_buf[MSTP_OUTPUT_BUFFER_SIZE];
  * -------------------------------------------------------------------------- */
 
 #define MSTP_PORT_STRUCT_OPAQUE_SIZE 512u
-static uint8_t mstp_port_opaque[MSTP_PORT_STRUCT_OPAQUE_SIZE];
+/* aligned(4): guarantees struct mstp_port_struct_t (M5) pointer alignment. */
+static uint8_t mstp_port_opaque[MSTP_PORT_STRUCT_OPAQUE_SIZE] __attribute__((aligned(4)));
 
 /* --------------------------------------------------------------------------
  * Static PDU scratch buffer for IPC operations
@@ -135,7 +136,11 @@ static bacnet_pdu_t outbound_pdu;
  *
  * Called once per iteration of the Core 1 main loop.  In phase 4 this will
  * drive the bacnet-stack MSTP_Receive_Frame_FSM and MSTP_Master_Node_FSM.
+ *
+ * Placed in .time_critical so it executes from SRAM, not XIP flash, avoiding
+ * stalls if Core 0 performs a flash erase/write while Core 1 is running.
  */
+__attribute__((section(".time_critical")))
 static void mstp_poll(void)
 {
     /* TODO(phase-4): Implement using bacnet-stack FSM functions.
@@ -169,7 +174,11 @@ static void mstp_poll(void)
 
 /**
  * @brief Dequeue one outbound PDU from ip_to_mstp_ring and transmit it.
+ *
+ * Placed in .time_critical so it executes from SRAM, guarding against XIP
+ * stalls during flash operations on Core 0 (see C3 in the resilience audit).
  */
+__attribute__((section(".time_critical")))
 static void mstp_transmit_outbound(void)
 {
     if (!ipc_ring_pop(&ip_to_mstp_ring, &outbound_pdu)) {
@@ -219,6 +228,17 @@ static void mstp_transmit_outbound(void)
  * Called by the Rust multicore::spawn_core1() shim after Core 1's stack and
  * vector table are configured.  This function never returns.
  *
+ * Placed in .time_critical so it (and the functions it calls) run from SRAM,
+ * not XIP flash.  This prevents XIP cache stalls when Core 0 erases or writes
+ * flash (e.g. saving config), which would otherwise pause Core 1 mid-frame
+ * and violate MS/TP timing constraints (C3 in resilience audit).
+ *
+ * TODO: Move Core 1 main loop to .time_critical SRAM section for all code
+ *       paths that execute during steady-state MS/TP operation.
+ * TODO: Signal Core 1 to enter an SRAM-only pause loop before Core 0 begins
+ *       any flash erase/program operation (via a shared flag in ipc_ring_t or
+ *       a dedicated control word), then release it after flash ops complete.
+ *
  * Initialisation sequence:
  *   1. Zero the MS/TP port opaque struct.
  *   2. Initialise UART1 and RS-485 GPIO.
@@ -227,10 +247,12 @@ static void mstp_transmit_outbound(void)
  *   5. Enter the polling loop.
  *
  * Main loop:
+ *   - Increment core1_heartbeat so Core 0 can detect a stalled Core 1 (C2).
  *   - Call mstp_poll() to advance the MS/TP receive and master-node FSMs.
  *   - Call mstp_transmit_outbound() to forward any queued BACnet/IP PDUs.
  *   - Any received MS/TP PDU is pushed to mstp_to_ip_ring inside mstp_poll().
  */
+__attribute__((section(".time_critical")))
 void core1_entry(void)
 {
     /* -----------------------------------------------------------------------
@@ -283,6 +305,11 @@ void core1_entry(void)
      * Step 5: Polling loop — runs forever on Core 1.
      * ---------------------------------------------------------------------- */
     for (;;) {
+        /* Increment the watchdog heartbeat counter (C2).
+         * Core 0 monitors this; if it stops incrementing for > 200 ms,
+         * Core 0 will trigger a hardware watchdog reset. */
+        core1_heartbeat++;
+
         /* Advance the MS/TP receive and master-node state machines. */
         mstp_poll();
 

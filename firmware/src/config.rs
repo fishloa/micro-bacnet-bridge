@@ -80,6 +80,23 @@ impl ConfigManager {
     /// Serialise `config` to JSON and write it to the last flash sector.
     ///
     /// Erases the sector first, then programs the serialised bytes.
+    ///
+    /// # XIP stall risk (C3)
+    ///
+    /// The RP2040 XIP cache is invalidated during flash erase/program operations.
+    /// Any Core 1 code that executes from XIP flash during this window will stall
+    /// until the flash operation completes, potentially missing RS-485 byte arrivals
+    /// and violating MS/TP timing (one bit at 76800 baud = 13 µs; a flash sector
+    /// erase takes ~50 ms).
+    ///
+    /// TODO: Move Core 1 main loop to .time_critical SRAM section — mark
+    ///       `core1_entry`, `mstp_poll`, and `mstp_transmit_outbound` with
+    ///       `__attribute__((section(".time_critical")))` in core1_entry.c
+    ///       (partially done; verify linker script places .time_critical in SRAM).
+    /// TODO: Signal Core 1 to enter an SRAM-only pause loop before calling
+    ///       `blocking_erase` / `blocking_write` here, then release it after.
+    ///       Use a shared atomic flag (e.g. in the IPC control struct) that
+    ///       Core 1 polls between MS/TP frames.
     #[allow(dead_code)]
     pub fn save(&mut self, config: &BridgeConfig) {
         let mut json_buf = [0u8; JSON_BUF_SIZE];

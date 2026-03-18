@@ -7,6 +7,28 @@
 use embassy_rp::multicore::{spawn_core1, Stack};
 use embassy_rp::peripherals::CORE1;
 
+// ---------------------------------------------------------------------------
+// Watchdog heartbeat (C2)
+// ---------------------------------------------------------------------------
+
+/// Heartbeat counter incremented by Core 1 on every iteration of its main loop.
+///
+/// Core 0 should read this periodically (e.g. every 200 ms) and compare
+/// against the previously observed value.  If the value has not changed for
+/// more than one sample interval, Core 1 has stalled and the RP2040 hardware
+/// watchdog should be triggered to reset both cores.
+///
+/// Declared `#[no_mangle]` so the C symbol `core1_heartbeat` resolves here.
+///
+/// # TODO
+/// - Check `core1_heartbeat` periodically in the Core 0 supervisor task;
+///   if stale for > 200 ms, trigger watchdog reset via RP2040 WATCHDOG_CTRL.
+/// - Enable the RP2040 hardware watchdog in a future phase using
+///   `embassy_rp::watchdog::Watchdog` with a 500 ms window; Core 0 feeds
+///   the watchdog only when Core 1's heartbeat is live.
+#[no_mangle]
+pub static mut core1_heartbeat: u32 = 0;
+
 /// Stack allocated for Core 1. 8 KB is sufficient for the C MS/TP state machine.
 static mut CORE1_STACK: Stack<8192> = Stack::new();
 
