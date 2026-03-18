@@ -81,12 +81,14 @@
 	});
 
 	function defaultConfig(p: BacnetPoint): PointConfig {
+		// Default conversion unit: use discoveredUnit if available and > 0
+		const engineeringUnit = (p.discoveredUnit > 0) ? p.discoveredUnit : 95;
 		return {
 			objectType: p.objectType,
 			objectInstance: p.objectInstance,
 			scale: 1.0,
 			offset: 0.0,
-			engineeringUnit: 95,
+			engineeringUnit,
 			bridgeToBacnetIp: true,
 			bridgeToMqtt: true,
 			showOnDashboard: true,
@@ -286,19 +288,45 @@
 	{:else}
 		<div class="table-wrap vui-card">
 			<table>
+				<colgroup>
+					<!-- BACnet MS/TP: Type, Name, Value, Unit (4 cols) -->
+					<col style="width: 52px" />
+					<col />
+					<col style="width: 120px" />
+					<col style="width: 90px" />
+					<!-- Conversion: Scale, Offset, Unit, Mapped Value (4 cols) -->
+					<col style="width: 80px" />
+					<col style="width: 80px" />
+					<col style="width: 100px" />
+					<col style="width: 140px" />
+					<!-- Exposure: Dash, B/IP, MQTT, API (4 cols) -->
+					<col style="width: 45px" />
+					<col style="width: 45px" />
+					<col style="width: 45px" />
+					<col style="width: 45px" />
+				</colgroup>
 				<thead>
-					<tr>
-						<th style="width: 52px">Type</th>
+					<tr class="super-header">
+						<th colspan="4" class="group-bacnet">BACnet MS/TP</th>
+						<th colspan="4" class="group-conversion">Conversion</th>
+						<th colspan="4" class="group-exposure">Exposure</th>
+					</tr>
+					<tr class="sub-header">
+						<!-- BACnet MS/TP group -->
+						<th class="border-group-start">Type</th>
 						<th>Name</th>
-						<th style="width: 120px">BACnet Value</th>
-						<th style="width: 80px">Scale</th>
-						<th style="width: 80px">Offset</th>
-						<th style="width: 140px">Mapped Value</th>
-						<th style="width: 100px">Unit</th>
-						<th style="width: 45px; text-align: center">Dash</th>
-						<th style="width: 45px; text-align: center">B/IP</th>
-						<th style="width: 45px; text-align: center">MQTT</th>
-						<th style="width: 45px; text-align: center">API</th>
+						<th>Value</th>
+						<th>Unit</th>
+						<!-- Conversion group -->
+						<th class="border-group-start">Scale</th>
+						<th>Offset</th>
+						<th>Unit</th>
+						<th>Mapped</th>
+						<!-- Exposure group -->
+						<th class="border-group-start" style="text-align: center">Dash</th>
+						<th style="text-align: center">B/IP</th>
+						<th style="text-align: center">MQTT</th>
+						<th style="text-align: center">API</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -308,20 +336,23 @@
 						{@const isDirty = dirty.has(row.key)}
 						{@const stateLabel = resolvedStateLabel(row.point, row.config)}
 						{@const mapped = computedValue(row.point, row.config)}
+						{@const dUnit = row.point.discoveredUnit}
 						<tr class:row-dirty={isDirty}>
-							<td>
+							<!-- Type badge -->
+							<td class="border-group-start">
 								<span class={badgeClass(row.point.objectType)}>{badgeLabel(row.point.objectType)}</span>
 							</td>
+							<!-- Name + description -->
 							<td class="cell-name">
 								<span class="point-name">{row.point.objectName}</span>
 								{#if row.point.description}
 									<span class="point-desc text-sub text-xs">{row.point.description}</span>
 								{/if}
 							</td>
-							<!-- BACnet Value (raw) -->
+							<!-- BACnet raw value -->
 							<td class="cell-value mono">
 								<span class="raw-value">{rawValue(row.point)}</span>
-								{#if multiState && row.config.stateText && row.config.stateText.length > 0}
+								{#if multiState}
 									<div class="state-text-input-wrap">
 										<input
 											class="vui-input compact-state-text"
@@ -332,21 +363,18 @@
 											title="Comma-separated state labels (1-based)"
 										/>
 									</div>
-								{:else if multiState}
-									<div class="state-text-input-wrap">
-										<input
-											class="vui-input compact-state-text"
-											type="text"
-											placeholder="Off,Heat,Cool,…"
-											value=""
-											oninput={(e) => onStateTextInput(row.point, e)}
-											title="Comma-separated state labels (1-based)"
-										/>
-									</div>
+								{/if}
+							</td>
+							<!-- Discovered unit (read-only) -->
+							<td class="cell-discovered-unit">
+								{#if dUnit > 0 && dUnit !== 95}
+									<span class="discovered-unit-badge" title="Reported by device">{unitLabel(dUnit)}</span>
+								{:else}
+									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
 							<!-- Scale -->
-							<td class="cell-input">
+							<td class="cell-input border-group-start">
 								{#if numeric && !multiState}
 									<input
 										class="vui-input compact-num"
@@ -373,17 +401,7 @@
 									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
-							<!-- Mapped Value -->
-							<td class="cell-mapped mono">
-								{#if multiState && stateLabel !== null}
-									<span class="computed-value">{stateLabel}</span>
-								{:else if !multiState && mapped !== null}
-									<span class="computed-value">{mapped}</span>
-								{:else}
-									<span class="text-sub text-sm">—</span>
-								{/if}
-							</td>
-							<!-- Unit -->
+							<!-- Conversion unit -->
 							<td class="cell-input">
 								{#if numeric && !multiState}
 									<select
@@ -395,12 +413,24 @@
 											<option value={unit.code}>{unit.label}</option>
 										{/each}
 									</select>
+								{:else if multiState && stateLabel !== null}
+									<span class="computed-value">{stateLabel}</span>
+								{:else}
+									<span class="text-sub text-sm">—</span>
+								{/if}
+							</td>
+							<!-- Mapped value -->
+							<td class="cell-mapped mono">
+								{#if multiState && stateLabel !== null}
+									<span class="computed-value">{stateLabel}</span>
+								{:else if !multiState && mapped !== null}
+									<span class="computed-value">{mapped}</span>
 								{:else}
 									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
 							<!-- Dash -->
-							<td class="col-check">
+							<td class="col-check border-group-start">
 								<input
 									type="checkbox"
 									class="vui-checkbox"
@@ -559,7 +589,41 @@
 		border-collapse: collapse;
 	}
 
-	th {
+	/* Super-header row */
+	.super-header th {
+		text-align: left;
+		padding: 4px var(--vui-space-sm);
+		font-size: var(--vui-text-xs);
+		font-weight: var(--vui-font-medium);
+		color: var(--vui-text-muted);
+		letter-spacing: 0.03em;
+		position: sticky;
+		top: 0;
+		background: var(--vui-surface, var(--vui-bg));
+		z-index: 2;
+		white-space: nowrap;
+		border-bottom: none;
+	}
+
+	.group-bacnet {
+		border-left: 2px solid var(--vui-accent, #16a34a);
+		padding-left: 8px;
+	}
+
+	.group-conversion {
+		border-left: 2px solid var(--vui-border-accent, #7c3aed);
+		padding-left: 8px;
+		color: var(--vui-text-muted);
+	}
+
+	.group-exposure {
+		border-left: 2px solid var(--vui-border, #e5e7eb);
+		padding-left: 8px;
+		color: var(--vui-text-muted);
+	}
+
+	/* Sub-header row (column labels) */
+	.sub-header th {
 		text-align: left;
 		padding: var(--vui-space-sm) var(--vui-space-sm);
 		font-size: var(--vui-text-xs);
@@ -569,7 +633,7 @@
 		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--vui-border);
 		position: sticky;
-		top: 0;
+		top: 25px; /* height of super-header row */
 		background: var(--vui-surface, var(--vui-bg));
 		z-index: 1;
 		white-space: nowrap;
@@ -580,6 +644,11 @@
 		border-bottom: 1px solid var(--vui-border);
 		font-size: var(--vui-text-sm);
 		vertical-align: middle;
+	}
+
+	/* Group divider — left border on the first column of each group */
+	.border-group-start {
+		border-left: 1px solid color-mix(in srgb, var(--vui-border) 60%, transparent);
 	}
 
 	tr:hover td {
@@ -622,6 +691,21 @@
 	.cell-mapped {
 		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
+	}
+
+	/* Discovered unit cell — read-only, muted badge style */
+	.cell-discovered-unit {
+		font-size: var(--vui-text-xs);
+	}
+
+	.discovered-unit-badge {
+		display: inline-block;
+		padding: 1px 6px;
+		border-radius: 4px;
+		background: color-mix(in srgb, var(--vui-border) 40%, transparent);
+		color: var(--vui-text-muted);
+		font-size: var(--vui-text-xs);
+		font-family: var(--vui-font-mono, monospace);
 	}
 
 	.raw-value {
