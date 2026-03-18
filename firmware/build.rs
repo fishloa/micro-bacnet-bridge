@@ -3,6 +3,25 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // ---- Build version: {major}.{minor}.{build}-{board} ----
+    // Semver: major.minor from Cargo.toml, build number from CI (auto-increments).
+    // GITHUB_RUN_NUMBER provides a monotonically increasing integer per workflow.
+    // Local builds use 0 as the build number.
+    // Example CI output: "0.1.42-pico", "0.1.42-pico2"
+    let pkg_version = env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.1.0".into());
+    let build_number = env::var("GITHUB_RUN_NUMBER").unwrap_or_else(|_| "0".into());
+    let board_name = if env::var("CARGO_FEATURE_BOARD_PICO2").is_ok() {
+        "pico2"
+    } else {
+        "pico"
+    };
+    // Extract major.minor from pkg_version (drop the patch digit, replace with build number)
+    let parts: Vec<&str> = pkg_version.split('.').collect();
+    let major = parts.first().unwrap_or(&"0");
+    let minor = parts.get(1).unwrap_or(&"1");
+    let full_version = format!("{major}.{minor}.{build_number}-{board_name}");
+    println!("cargo:rustc-env=FIRMWARE_VERSION={full_version}");
+    println!("cargo:rustc-env=FIRMWARE_BOARD={board_name}");
     // Select the correct memory layout based on the board feature.
     //
     // Exactly one of board-pico / board-pico2 must be enabled; the build

@@ -125,11 +125,13 @@ jobs:
       - name: Convert ELF to UF2
         run: |
           ELF="${{ matrix.elf_path }}"
-          UF2="target/micro-bacnet-bridge-${{ matrix.board }}.uf2"
+          VERSION="0.1.${{ github.run_number }}"
+          UF2="target/micro-bacnet-bridge-${VERSION}-${{ matrix.board }}.uf2"
           if command -v elf2uf2-rs &>/dev/null && [ -f "$ELF" ]; then
             elf2uf2-rs "$ELF" "$UF2"
             echo "UF2_AVAILABLE=true" >> "$GITHUB_ENV"
             echo "UF2_PATH=$UF2" >> "$GITHUB_ENV"
+            echo "FW_VERSION=$VERSION" >> "$GITHUB_ENV"
           else
             echo "UF2_AVAILABLE=false" >> "$GITHUB_ENV"
           fi

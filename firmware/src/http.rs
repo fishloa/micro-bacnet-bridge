@@ -358,7 +358,7 @@ async fn api_get_status(socket: &mut TcpSocket<'_>) {
             "{{\"uptime\":{},\"deviceCount\":{},\"vendor\":\"Icomb Place\",\"firmware\":\"{}\"}}",
             uptime_s,
             device_count,
-            env!("CARGO_PKG_VERSION"),
+            env!("FIRMWARE_VERSION"),
         ),
     );
     send_json(socket, body.as_bytes()).await;
@@ -466,6 +466,6 @@ fn json_escape_into(s: &str, out: &mut heapless::String<256>) -> bool {
 
 const OPENAPI_STUB: &str = concat!(
     r#"{"openapi":"3.1.0","info":{"title":"BACnet Bridge API","version":""#,
-    env!("CARGO_PKG_VERSION"),
+    env!("FIRMWARE_VERSION"),
     r#"","contact":{"name":"Icomb Place"}},"paths":{}}"#
 );

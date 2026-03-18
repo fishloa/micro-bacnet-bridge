@@ -67,7 +67,7 @@ const SNMP_PORT: u16 = 161;
 const COMMUNITY: &[u8] = b"public";
 
 /// Firmware version string (embedded at compile time).
-const FIRMWARE_VERSION: &str = env!("CARGO_PKG_VERSION");
+const FIRMWARE_VERSION: &str = env!("FIRMWARE_VERSION");
 
 /// UDP buffer sizes.
 const RX_BUF: usize = 512;

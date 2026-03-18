@@ -48,7 +48,7 @@ static WIZNET_STATE: StaticCell<embassy_net_wiznet::State<4, 4>> = StaticCell::n
 async fn main(spawner: Spawner) {
     info!(
         "micro-bacnet-bridge starting (Icomb Place firmware v{})",
-        env!("CARGO_PKG_VERSION")
+        env!("FIRMWARE_VERSION")
     );
 
     let p = embassy_rp::init(Default::default());
