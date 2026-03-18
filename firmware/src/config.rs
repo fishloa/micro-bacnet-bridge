@@ -81,6 +81,29 @@ impl ConfigManager {
     ///
     /// Erases the sector first, then programs the serialised bytes.
     ///
+    /// # Power-loss safety (M4 — KNOWN LIMITATION)
+    ///
+    /// This implementation is **not** power-loss safe.  The write sequence is:
+    ///   1. Erase the config sector (flash returns to all-0xFF).
+    ///   2. Program the new config bytes.
+    ///
+    /// If power is lost between steps 1 and 2 the sector is blank and the device
+    /// boots with default settings on next power-up — no data corruption, but the
+    /// stored config is lost.
+    ///
+    /// **Future improvement:** implement a double-buffered config store using two
+    /// alternating flash sectors, each tagged with a generation counter.  The write
+    /// procedure then becomes:
+    ///   1. Erase the *inactive* sector.
+    ///   2. Write the new config to the inactive sector with `generation + 1`.
+    ///   3. On load, read both sectors; the one with the higher valid generation
+    ///      counter wins.  This survives a power loss at any step because at worst
+    ///      the inactive sector is blank, and the active sector still holds the
+    ///      last good config.
+    ///
+    /// This requires allocating two 4 KiB sectors at the top of flash and updating
+    /// `CONFIG_OFFSET` and `BridgeConfig` to carry the generation counter.
+    ///
     /// # XIP stall risk (C3)
     ///
     /// The RP2040 XIP cache is invalidated during flash erase/program operations.

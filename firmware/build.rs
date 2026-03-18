@@ -54,6 +54,9 @@ fn main() {
         .flag("-std=c99")
         .flag("-Wall")
         .flag("-Wextra")
-        .warnings(false)
+        // L4: Enable C warnings so that issues in csrc/ are visible in CI.
+        // Previously `.warnings(false)` silenced all diagnostics; now the `-Wall`
+        // and `-Wextra` flags above take effect.
+        .warnings(true)
         .compile("bacnet");
 }

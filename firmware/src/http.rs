@@ -40,7 +40,11 @@ pub async fn http_task(stack: Stack<'static>) {
 
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
-        socket.set_timeout(Some(embassy_time::Duration::from_secs(10)));
+        // M7: Use a longer timeout so that SSE connections (which are long-lived
+        // by design) are not prematurely dropped.  The per-request path uses the
+        // same socket but will close the connection after one response anyway, so
+        // the longer timeout is harmless there.
+        socket.set_timeout(Some(embassy_time::Duration::from_secs(120)));
 
         info!("http: waiting for connection on port {}", HTTP_PORT);
         if socket.accept(HTTP_PORT).await.is_err() {
@@ -170,26 +174,43 @@ fn read_body(request: &str) -> &str {
 async fn serve_asset(socket: &mut TcpSocket<'_>, path: &str) {
     match web_assets::get_asset(path) {
         Some((data, content_type)) => {
-            let mut hdr: heapless::Vec<u8, 256> = heapless::Vec::new();
-            let _ = hdr.extend_from_slice(b"HTTP/1.1 200 OK\r\n");
-            let _ = hdr.extend_from_slice(b"Content-Encoding: gzip\r\n");
-            let _ = hdr.extend_from_slice(b"Content-Type: ");
-            let _ = hdr.extend_from_slice(content_type.as_bytes());
-            let _ = hdr.extend_from_slice(b"\r\n");
+            // M1: Buffer increased to 512 bytes to accommodate the longest possible
+            // Content-Type + Cache-Control + Content-Length header line without
+            // silent truncation.  extend_from_slice errors are now propagated so
+            // that a truncated header causes a 500-equivalent (connection drop)
+            // rather than silently sending malformed HTTP.
+            let mut hdr: heapless::Vec<u8, 512> = heapless::Vec::new();
+            if hdr.extend_from_slice(b"HTTP/1.1 200 OK\r\n").is_err()
+                || hdr
+                    .extend_from_slice(b"Content-Encoding: gzip\r\n")
+                    .is_err()
+                || hdr.extend_from_slice(b"Content-Type: ").is_err()
+                || hdr.extend_from_slice(content_type.as_bytes()).is_err()
+                || hdr.extend_from_slice(b"\r\n").is_err()
+            {
+                warn!("http: header buffer overflow building serve_asset header");
+                return;
+            }
             // Cache control: cache immutable assets, revalidate others
-            if path.contains("immutable") {
-                let _ = hdr
-                    .extend_from_slice(b"Cache-Control: public, max-age=31536000, immutable\r\n");
+            let cache_result = if path.contains("immutable") {
+                hdr.extend_from_slice(b"Cache-Control: public, max-age=31536000, immutable\r\n")
             } else {
-                let _ = hdr.extend_from_slice(b"Cache-Control: no-cache\r\n");
+                hdr.extend_from_slice(b"Cache-Control: no-cache\r\n")
+            };
+            if cache_result.is_err() {
+                warn!("http: header buffer overflow writing Cache-Control");
+                return;
             }
             // Write content-length
-            let mut len_line: heapless::String<32> = heapless::String::new();
+            let mut len_line: heapless::String<48> = heapless::String::new();
             let _ = core::fmt::write(
                 &mut len_line,
                 format_args!("Content-Length: {}\r\n\r\n", data.len()),
             );
-            let _ = hdr.extend_from_slice(len_line.as_bytes());
+            if hdr.extend_from_slice(len_line.as_bytes()).is_err() {
+                warn!("http: header buffer overflow writing Content-Length");
+                return;
+            }
 
             if socket.write_all(&hdr).await.is_err() {
                 return;
@@ -225,13 +246,17 @@ async fn api_get_devices(socket: &mut TcpSocket<'_>) {
             let _ = body.extend_from_slice(b",");
         }
         first = false;
-        let mut entry: heapless::String<128> = heapless::String::new();
+        // M8: escape the device name to avoid broken JSON when it contains
+        // `"` or `\` characters.
+        let mut escaped_name: heapless::String<256> = heapless::String::new();
+        json_escape_into(d.name.as_str(), &mut escaped_name);
+        let mut entry: heapless::String<384> = heapless::String::new();
         let _ = core::fmt::write(
             &mut entry,
             format_args!(
                 "{{\"deviceId\":{},\"name\":\"{}\",\"pointsLoaded\":{}}}",
                 d.device_id,
-                d.name.as_str(),
+                escaped_name.as_str(),
                 d.points_loaded
             ),
         );
@@ -290,13 +315,16 @@ async fn api_get_bacnet_config(socket: &mut TcpSocket<'_>) {
         }
     };
     let bac = &cfg.bacnet;
-    let mut body: heapless::String<256> = heapless::String::new();
+    // M8: escape the device name field so `"` and `\` don't break JSON.
+    let mut escaped_device_name: heapless::String<256> = heapless::String::new();
+    json_escape_into(bac.device_name.as_str(), &mut escaped_device_name);
+    let mut body: heapless::String<384> = heapless::String::new();
     let _ = core::fmt::write(
         &mut body,
         format_args!(
             "{{\"deviceId\":{},\"deviceName\":\"{}\",\"mstpMac\":{},\"mstpBaud\":{},\"maxMaster\":{}}}",
             bac.device_id,
-            bac.device_name.as_str(),
+            escaped_device_name.as_str(),
             bac.mstp_mac,
             bac.mstp_baud,
             bac.max_master,
@@ -388,6 +416,38 @@ async fn send_404(socket: &mut TcpSocket<'_>) {
         .write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n")
         .await;
     let _ = socket.flush().await;
+}
+
+// ---------------------------------------------------------------------------
+// JSON string escaping (M8)
+// ---------------------------------------------------------------------------
+
+/// Write `s` into `out` with JSON string escaping: `"` → `\"`, `\` → `\\`,
+/// control characters → `\uXXXX`.  The result is the *content* of a JSON
+/// string — callers must add the surrounding `"` delimiters themselves.
+///
+/// Returns `true` if the output fit in `out`, `false` on overflow.
+fn json_escape_into(s: &str, out: &mut heapless::String<256>) -> bool {
+    for ch in s.chars() {
+        let ok = match ch {
+            '"' => out.push_str("\\\"").is_ok(),
+            '\\' => out.push_str("\\\\").is_ok(),
+            '\n' => out.push_str("\\n").is_ok(),
+            '\r' => out.push_str("\\r").is_ok(),
+            '\t' => out.push_str("\\t").is_ok(),
+            c if (c as u32) < 0x20 => {
+                // Control character — encode as \uXXXX
+                let mut tmp: heapless::String<8> = heapless::String::new();
+                let _ = core::fmt::write(&mut tmp, format_args!("\\u{:04X}", c as u32));
+                out.push_str(tmp.as_str()).is_ok()
+            }
+            c => out.push(c).is_ok(),
+        };
+        if !ok {
+            return false;
+        }
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------

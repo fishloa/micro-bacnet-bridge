@@ -18,6 +18,19 @@ use defmt::{info, warn};
 use embassy_net::udp::{PacketMetadata, UdpSocket};
 use embassy_net::{IpAddress, IpEndpoint, Ipv4Address, Stack};
 
+/// The mDNS multicast group endpoint — all responses must be sent here per
+/// RFC 6762 §11.  Sending to the querier's unicast address is only allowed
+/// in special "legacy unicast" cases (§6.7) which we do not implement.
+const MDNS_MULTICAST_ENDPOINT: IpEndpoint = IpEndpoint::new(
+    embassy_net::IpAddress::Ipv4(Ipv4Address::new(
+        MDNS_ADDR[0],
+        MDNS_ADDR[1],
+        MDNS_ADDR[2],
+        MDNS_ADDR[3],
+    )),
+    MDNS_PORT,
+);
+
 /// UDP packet buffer sizes.
 const RX_BUF: usize = 512;
 const TX_BUF: usize = 512;
@@ -66,7 +79,8 @@ pub async fn mdns_task(stack: Stack<'static>) {
     let mut resp_buf = [0u8; 512];
 
     loop {
-        let (n, meta) = match socket.recv_from(&mut pkt_buf).await {
+        // We do not need the sender address: all responses go to multicast (M2).
+        let (n, _meta) = match socket.recv_from(&mut pkt_buf).await {
             Ok(r) => r,
             Err(_) => {
                 warn!("mdns: recv error");
@@ -80,6 +94,12 @@ pub async fn mdns_task(stack: Stack<'static>) {
             Err(_) => continue,
         };
 
+        // M9 TODO: decode_query() returns only the *first* question from a
+        // multi-question mDNS packet (RFC 6762 §6 allows multiple questions in
+        // one UDP datagram).  For the common single-question case this is fine.
+        // A future improvement should iterate over all qd_count questions and
+        // send a combined response, but that requires a more complex encoder.
+
         // Read hostname and device ID from config
         let (hostname, device_id) = {
             let guard = crate::http::CONFIG.lock().await;
@@ -87,22 +107,27 @@ pub async fn mdns_task(stack: Stack<'static>) {
                 Some(cfg) => (cfg.hostname.as_str(), cfg.bacnet.device_id),
                 None => ("bacnet-bridge", 389999u32),
             };
+            // M3: hostname can be up to 32 characters; use String<32>.
             let mut h: heapless::String<32> = heapless::String::new();
             let _ = h.push_str(h_str);
             (h, did)
         };
 
-        // Build the fully qualified name for the hostname
-        let mut fqdn: heapless::String<64> = heapless::String::new();
+        // M3: Build the fully qualified name for the hostname.
+        // Worst case: 32-char hostname + ".local" (6) = 38 chars → String<48>.
+        let mut fqdn: heapless::String<48> = heapless::String::new();
         let _ = fqdn.push_str(hostname.as_str());
         let _ = fqdn.push_str(".local");
 
-        // Build service instance names
-        let mut http_instance: heapless::String<64> = heapless::String::new();
+        // M3: Build service instance names.
+        // Worst case: 32-char hostname + "._http._tcp.local" (17) = 49 chars
+        //             32-char hostname + "._bacnet._udp.local" (19) = 51 chars
+        // Use String<96> to give comfortable headroom.
+        let mut http_instance: heapless::String<96> = heapless::String::new();
         let _ = http_instance.push_str(hostname.as_str());
         let _ = http_instance.push_str("._http._tcp.local");
 
-        let mut bacnet_instance: heapless::String<64> = heapless::String::new();
+        let mut bacnet_instance: heapless::String<96> = heapless::String::new();
         let _ = bacnet_instance.push_str(hostname.as_str());
         let _ = bacnet_instance.push_str("._bacnet._udp.local");
 
@@ -112,6 +137,43 @@ pub async fn mdns_task(stack: Stack<'static>) {
 
         let name_str = query.name.as_str();
         let qtype = query.qtype;
+
+        // M6: For DNS-SD (_services._dns-sd._udp.local) we must send a PTR for
+        // *each* service type we advertise.  Our encoder writes one record per call,
+        // so we send two separate UDP datagrams — both to the multicast address
+        // (M2) — which is legal per RFC 6762 §11.
+        if qtype == TYPE_PTR && name_str == "_services._dns-sd._udp.local" {
+            let mut buf_http = [0u8; 512];
+            let mut buf_bacnet = [0u8; 512];
+            let r1 = encode_ptr_response(
+                "_services._dns-sd._udp.local",
+                "_http._tcp.local",
+                &mut buf_http,
+            );
+            let r2 = encode_ptr_response(
+                "_services._dns-sd._udp.local",
+                "_bacnet._udp.local",
+                &mut buf_bacnet,
+            );
+            // M2: send to multicast group, not the querier's unicast address.
+            if let Ok(len) = r1 {
+                if let Err(_) = socket
+                    .send_to(&buf_http[..len], MDNS_MULTICAST_ENDPOINT)
+                    .await
+                {
+                    warn!("mdns: send_to (dns-sd http) failed");
+                }
+            }
+            if let Ok(len) = r2 {
+                if let Err(_) = socket
+                    .send_to(&buf_bacnet[..len], MDNS_MULTICAST_ENDPOINT)
+                    .await
+                {
+                    warn!("mdns: send_to (dns-sd bacnet) failed");
+                }
+            }
+            continue; // already handled
+        }
 
         let resp_len = if qtype == TYPE_A && name_str == fqdn.as_str() {
             // Respond with our IPv4 address
@@ -124,16 +186,6 @@ pub async fn mdns_task(stack: Stack<'static>) {
                 encode_ptr_response(
                     "_bacnet._udp.local",
                     bacnet_instance.as_str(),
-                    &mut resp_buf,
-                )
-                .ok()
-            } else if name_str == "_services._dns-sd._udp.local" {
-                // For DNS-SD we respond with _http._tcp.local PTR
-                // (single answer — we'd need multi-answer to include both services,
-                //  but our encoder only does one record per call)
-                encode_ptr_response(
-                    "_services._dns-sd._udp.local",
-                    "_http._tcp.local",
                     &mut resp_buf,
                 )
                 .ok()
@@ -176,10 +228,14 @@ pub async fn mdns_task(stack: Stack<'static>) {
         };
 
         if let Some(len) = resp_len {
-            let remote: IpEndpoint = meta.endpoint;
-            // Send response to the querying host on port 5353
-            let dest = IpEndpoint::new(remote.addr, MDNS_PORT);
-            if let Err(_) = socket.send_to(&resp_buf[..len], dest).await {
+            // M2: mDNS responses must be sent to the multicast group (224.0.0.251:5353),
+            // not back to the querier's unicast address.  RFC 6762 §11 requires this for
+            // shared-resource records; sending unicast is only permitted for legacy
+            // unicast queries (QU bit set, port != 5353) which we do not implement.
+            if let Err(_) = socket
+                .send_to(&resp_buf[..len], MDNS_MULTICAST_ENDPOINT)
+                .await
+            {
                 warn!("mdns: send_to failed");
             }
         }

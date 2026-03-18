@@ -23,7 +23,8 @@ const CTRL_PRIORITY_MASK: u8 = 0x03;
 pub const MAX_MAC_LEN: usize = 7;
 
 /// Parsed BACnet NPDU header.
-#[derive(Debug, Clone, PartialEq)]
+// L1: Eq is derivable because all fields implement Eq (arrays, u8, u16, bool).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NpduHeader {
     /// Always 1.
     pub version: u8,
@@ -426,5 +427,23 @@ mod tests {
         let (decoded, _) = decode_npdu(&buf[..n]).unwrap();
         assert_eq!(decoded.priority, 3);
         assert!(decoded.is_network_layer_msg);
+    }
+
+    // L1: NpduHeader must implement Eq (not just PartialEq) so it can be used
+    // in contexts that require a total equality relation.
+    #[test]
+    fn npdu_header_eq() {
+        let a = local_header();
+        let b = local_header();
+        assert_eq!(a, b);
+
+        let mut c = local_header();
+        c.dest_net = 42;
+        assert_ne!(a, c);
+
+        // Eq is reflexive
+        assert_eq!(a, a);
+        // Eq is symmetric
+        assert_eq!(a == b, b == a);
     }
 }

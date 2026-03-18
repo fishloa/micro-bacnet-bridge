@@ -56,6 +56,13 @@ pub async fn bacnet_ip_task(stack: Stack<'static>) {
     let mut pkt_buf = [0u8; RX_BUF];
     let mut out_buf = [0u8; TX_BUF];
 
+    // M5 TODO: The current loop polls the outbound ring buffer then awaits
+    // recv_from, which means we stall on inbound data even when there are
+    // outbound PDUs waiting.  Refactor to use `embassy_futures::select!` (or
+    // `embassy_futures::select::Either`) to multiplex the inbound recv_from
+    // future with a periodic timer/waker for the outbound ring, so neither
+    // direction starves the other.  This is a design-level change requiring
+    // the `embassy-futures` crate.
     loop {
         // Check for outgoing PDUs from the MS/TP side
         let ring = ipc::mstp_to_ip();

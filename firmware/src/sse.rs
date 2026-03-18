@@ -94,9 +94,25 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
                                 s
                             }
                             Some(bridge_core::bacnet::BacnetValue::CharString(cs)) => {
+                                // M8: escape the string value to avoid malformed JSON when it
+                                // contains `"` or `\` characters.
                                 let mut s: heapless::String<64> = heapless::String::new();
                                 let _ = s.push('"');
-                                let _ = s.push_str(cs.as_str());
+                                for ch in cs.as_str().chars() {
+                                    match ch {
+                                        '"' => {
+                                            let _ = s.push('\\');
+                                            let _ = s.push('"');
+                                        }
+                                        '\\' => {
+                                            let _ = s.push('\\');
+                                            let _ = s.push('\\');
+                                        }
+                                        c => {
+                                            let _ = s.push(c);
+                                        }
+                                    }
+                                }
                                 let _ = s.push('"');
                                 s
                             }

@@ -195,6 +195,17 @@ bool ipc_ring_is_full(const ipc_ring_t *ring);
  * -------------------------------------------------------------------------- */
 
 /**
+ * @brief Sticky UART receive error flag (L5).
+ *
+ * Set to true by mstp_port_get_byte() when the PL011 data register indicates
+ * a framing, parity, break, or overrun error on the received byte.
+ * Callers may read and reset this flag at any point; it is not cleared
+ * automatically.  The MS/TP CRC provides the primary error detection;
+ * this flag is supplementary diagnostic information.
+ */
+extern volatile bool g_uart_rx_error;
+
+/**
  * @brief Initialise UART1 and the RS-485 direction pin.
  * @param baud_rate  Desired baud rate (9600, 19200, 38400, or 76800).
  */

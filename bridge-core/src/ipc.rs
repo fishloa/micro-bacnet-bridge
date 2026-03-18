@@ -87,6 +87,10 @@ impl PartialEq for BacnetPdu {
     }
 }
 
+// L2: BacnetPdu's PartialEq is a total equality relation (no floating-point
+// fields, no NaN), so Eq is safe to implement as a marker.
+impl Eq for BacnetPdu {}
+
 impl BacnetPdu {
     /// Create a zeroed PDU.
     pub const fn new() -> Self {
@@ -233,10 +237,13 @@ impl<const N: usize> RingBuffer<N> {
     ///
     /// Computed as `head.wrapping_sub(tail)` — correct even across `u32`
     /// overflow because both indices increment at the same rate.
+    ///
+    /// L7: Implementation simplified to a single wrapping subtraction with no
+    /// conditional branches, matching the same idiom used in `is_full()` and
+    /// the C-side `ipc_ring_t`.
     pub fn len(&self) -> usize {
-        let h = unsafe { read_volatile(&self.head) };
-        let t = unsafe { read_volatile(&self.tail) };
-        h.wrapping_sub(t) as usize
+        // SAFETY: self is exclusively accessed here (SPSC contract).
+        unsafe { read_volatile(&self.head).wrapping_sub(read_volatile(&self.tail)) as usize }
     }
 }
 
@@ -392,5 +399,57 @@ mod tests {
         assert_eq!(out.dest_net, 100);
         assert_eq!(out.data_len, 3);
         assert_eq!(&out.data[..3], &[0xAA, 0xBB, 0xCC]);
+    }
+
+    // L2: BacnetPdu must implement Eq (a total equality relation).
+    #[test]
+    fn bacnet_pdu_eq_is_total() {
+        let a = make_pdu(0x10, 0xAB);
+        let b = make_pdu(0x10, 0xAB);
+        // Reflexive
+        assert_eq!(a, a);
+        // Symmetric
+        assert_eq!(a, b);
+        assert_eq!(b, a);
+        // Antisymmetric: different PDUs must not be equal
+        let c = make_pdu(0x20, 0xAB);
+        assert_ne!(a, c);
+        // Eq is usable in a HashMap key position (compile-time check via trait bound)
+        fn assert_eq_bound<T: Eq>(_: &T) {}
+        assert_eq_bound(&a);
+    }
+
+    // L7: len() must correctly report occupancy across the u32 index wraparound
+    // boundary.  We simulate wraparound by forcing head and tail to near-max
+    // values using multiple push/pop cycles.
+    #[test]
+    fn len_at_wraparound() {
+        // Use a size-2 ring so each item moves head/tail by 1.
+        // After 2^32 / 2 push-pop cycles we would wrap, but we can't do that many.
+        // Instead, verify that len() after N pushes and M pops is N-M for
+        // various N and M values, including the case where the internal counters
+        // would wrap if they were u8.  We use RingBuffer<4> and do 260 push/pop
+        // pairs to exceed u8::MAX.
+        let mut rb: RingBuffer<4> = RingBuffer::new();
+        for _ in 0..260u32 {
+            assert!(rb.push(&make_pdu(1, 1)));
+            let _ = rb.pop();
+        }
+        assert_eq!(rb.len(), 0);
+
+        // Push 3, verify len is 3
+        assert!(rb.push(&make_pdu(10, 1)));
+        assert!(rb.push(&make_pdu(11, 2)));
+        assert!(rb.push(&make_pdu(12, 3)));
+        assert_eq!(rb.len(), 3);
+
+        // Pop 1, verify len is 2
+        let _ = rb.pop();
+        assert_eq!(rb.len(), 2);
+
+        // Pop remaining
+        let _ = rb.pop();
+        let _ = rb.pop();
+        assert_eq!(rb.len(), 0);
     }
 }

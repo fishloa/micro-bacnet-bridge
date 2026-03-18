@@ -65,6 +65,26 @@
 #define UART_FR_TXFF        (1u << 5) /**< TX FIFO full. */
 #define UART_FR_BUSY        (1u << 3) /**< UART busy transmitting. */
 
+/* L5: UART_DR error flag bits (bits 8–11 of the data register, PL011 §3.3.1).
+ *
+ * When any of these bits is set the received byte in bits [7:0] is invalid.
+ * The MS/TP CRC in the bacnet-stack state machine provides the primary error
+ * detection mechanism — a bad byte will cause a CRC mismatch and the frame
+ * will be discarded.  However, detecting hardware errors early lets us track
+ * UART health statistics (e.g. for the /api/v1/system/status endpoint) and
+ * avoids propagating noise bytes into the state machine unnecessarily.
+ *
+ * Current implementation: mstp_port_get_byte() records a sticky error flag
+ * (g_uart_rx_error) if any error bit is set.  The flag can be read and
+ * cleared by bacnet_port.c.  The byte value is still returned — the MS/TP
+ * CRC will reject the frame if the data is corrupt.
+ */
+#define UART_DR_FE          (1u << 8)  /**< Framing error. */
+#define UART_DR_PE          (1u << 9)  /**< Parity error. */
+#define UART_DR_BE          (1u << 10) /**< Break error. */
+#define UART_DR_OE          (1u << 11) /**< Overrun error. */
+#define UART_DR_ERROR_MASK  (UART_DR_FE | UART_DR_PE | UART_DR_BE | UART_DR_OE)
+
 /* UART_LCR_H bit masks */
 #define UART_LCR_H_FEN      (1u << 4) /**< Enable FIFOs. */
 #define UART_LCR_H_WLEN_8   (3u << 5) /**< 8-bit word length. */
@@ -139,6 +159,21 @@
  * -------------------------------------------------------------------------- */
 
 #define REG(base, offset)   (*(volatile uint32_t *)((base) + (offset)))
+
+/* --------------------------------------------------------------------------
+ * L5: UART receive error tracking
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Sticky flag set whenever mstp_port_get_byte() reads a byte with one
+ *        or more PL011 error bits set (framing, parity, break, or overrun).
+ *
+ * Consumers (e.g. bacnet_port.c or the Rust status API) may read and reset
+ * this flag at any time.  The MS/TP CRC in the bacnet-stack state machine
+ * provides the definitive error detection; this flag is supplementary
+ * diagnostic information only.
+ */
+volatile bool g_uart_rx_error = false;
 
 /* --------------------------------------------------------------------------
  * mstp_port_init
@@ -304,16 +339,31 @@ bool mstp_port_byte_available(void)
  * @brief Read one byte from the UART1 RX FIFO.
  *
  * The caller must verify data is available with mstp_port_byte_available()
- * before calling this function.  The data register low 8 bits contain the
- * received byte; the upper bits contain error flags which are ignored here
- * (the MS/TP CRC provides error detection).
+ * before calling this function.
+ *
+ * L5: The PL011 data register bits [11:8] contain error flags (framing,
+ * parity, break, overrun).  When any flag is set the byte value in bits [7:0]
+ * may be corrupt.  We record this condition in the sticky g_uart_rx_error flag
+ * for diagnostic purposes and still return the byte — the MS/TP CRC in the
+ * bacnet-stack state machine provides the primary error detection and will
+ * discard frames with bad bytes.
+ *
+ * Note: clearing the overrun error requires reading the data register (which
+ * we do here) per PL011 §3.3.4.  No additional register write is needed.
  *
  * @return The received byte (low 8 bits of DR).
  */
 __attribute__((section(".time_critical")))
 uint8_t mstp_port_get_byte(void)
 {
-    return (uint8_t)(REG(UART1_BASE, UART_DR_OFFSET) & 0xFFu);
+    uint32_t dr = REG(UART1_BASE, UART_DR_OFFSET);
+
+    /* L5: Check error flag bits [11:8].  Set sticky flag if any are present. */
+    if (dr & UART_DR_ERROR_MASK) {
+        g_uart_rx_error = true;
+    }
+
+    return (uint8_t)(dr & 0xFFu);
 }
 
 /* --------------------------------------------------------------------------

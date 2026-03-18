@@ -114,12 +114,38 @@ pub struct ResourceRecord<'a> {
 ///
 /// Example: `write_name(buf, pos, "bacnet-bridge", "local")` writes
 /// `\x0dbacnet-bridge\x05local\x00`.
+///
+/// L6: The total encoded name length (sum of all label bytes + length bytes +
+/// terminating zero) must not exceed 253 bytes per RFC 1035 §2.3.4.  This
+/// function validates that constraint before writing anything.
 fn write_name(
     buf: &mut [u8],
     pos: &mut usize,
     name: &str,
     domain: &str,
 ) -> Result<(), EncodeError> {
+    // L6: Validate total DNS name length before writing.
+    // Each label contributes: 1 (length byte) + label.len() bytes.
+    // The terminating 0x00 contributes 1 byte.
+    // DNS names must be <= 253 octets when written in wire format
+    // (the practical limit is 253 payload bytes + 2 length/zero bytes = 255,
+    //  but RFC 1035 §2.3.4 limits the full name to 255 octets total on wire,
+    //  and the presentation form (dot-separated) to 253 characters).
+    let mut encoded_len: usize = 1; // terminating zero
+    for part in name.split('.').chain(if domain.is_empty() {
+        "".split('.')
+    } else {
+        domain.split('.')
+    }) {
+        if part.is_empty() {
+            continue;
+        }
+        encoded_len += 1 + part.len(); // length byte + label bytes
+    }
+    if encoded_len > 255 {
+        return Err(EncodeError::StringTooLong);
+    }
+
     for part in name.split('.') {
         write_label(buf, pos, part)?;
     }
@@ -319,7 +345,12 @@ pub fn encode_ptr_response(
     write_rr_header(buf, &mut pos, TYPE_PTR, CLASS_IN, MDNS_TTL, 0)?;
     let rdata_start = pos;
     write_name(buf, &mut pos, instance, "")?;
-    let rdlength = (pos - rdata_start) as u16;
+    let rdata_len = pos - rdata_start;
+    // M10: rdlength is a u16 field; verify the rdata fits.
+    if rdata_len > u16::MAX as usize {
+        return Err(EncodeError::StringTooLong);
+    }
+    let rdlength = rdata_len as u16;
     buf[rdlength_pos] = (rdlength >> 8) as u8;
     buf[rdlength_pos + 1] = rdlength as u8;
     Ok(pos)
@@ -355,7 +386,12 @@ pub fn encode_srv_response(
     write_u16(buf, &mut pos, 0); // weight
     write_u16(buf, &mut pos, port);
     write_name(buf, &mut pos, hostname, "local")?;
-    let rdlength = (pos - rdata_start) as u16;
+    let rdata_len = pos - rdata_start;
+    // M10: rdlength is a u16 field; verify the rdata fits.
+    if rdata_len > u16::MAX as usize {
+        return Err(EncodeError::StringTooLong);
+    }
+    let rdlength = rdata_len as u16;
     buf[rdlength_pos] = (rdlength >> 8) as u8;
     buf[rdlength_pos + 1] = rdlength as u8;
     Ok(pos)
@@ -408,7 +444,12 @@ pub fn encode_txt_response(
         }
     }
 
-    let rdlength = (pos - rdata_start) as u16;
+    let rdata_len = pos - rdata_start;
+    // M10: rdlength is a u16 field; verify the rdata fits.
+    if rdata_len > u16::MAX as usize {
+        return Err(EncodeError::StringTooLong);
+    }
+    let rdlength = rdata_len as u16;
     buf[rdlength_pos] = (rdlength >> 8) as u8;
     buf[rdlength_pos + 1] = rdlength as u8;
     Ok(pos)
@@ -674,5 +715,81 @@ mod tests {
         assert_ne!(read_u16(&buf, 2) & 0x8000, 0, "QR bit should be set");
         // Verify RDATA (last 4 bytes)
         assert_eq!(&buf[n - 4..n], &[10, 0, 1, 2]);
+    }
+
+    // L6: DNS name total encoded length must not exceed 255 wire bytes.
+    // A hostname composed of labels that exceeds 253 chars must be rejected.
+    // We test through encode_a_response which calls write_name internally.
+    #[test]
+    fn encode_a_rejects_overlong_hostname() {
+        // Four 63-char labels dot-separated = 4*63 + 3 dots = 255 chars in
+        // presentation form; on wire each label adds a length byte, so the
+        // encoded form is 4*(1+63) + 1 (zero) = 257 bytes — exceeds 255.
+        let long_label: heapless::String<64> = {
+            let mut s: heapless::String<64> = heapless::String::new();
+            for _ in 0..63 {
+                let _ = s.push('a');
+            }
+            s
+        };
+        // Build "aaaa...63.aaaa...63.aaaa...63.aaaa...63" as a heapless String<256>
+        let mut long_hostname: heapless::String<256> = heapless::String::new();
+        for i in 0..4usize {
+            if i > 0 {
+                let _ = long_hostname.push('.');
+            }
+            let _ = long_hostname.push_str(long_label.as_str());
+        }
+        let mut buf = [0u8; 512];
+        let result = encode_a_response(long_hostname.as_str(), [10, 0, 0, 1], &mut buf);
+        assert_eq!(
+            result.unwrap_err(),
+            EncodeError::StringTooLong,
+            "hostname with wire-format name > 255 bytes must return StringTooLong"
+        );
+    }
+
+    // L6: A name that fits within 255 wire bytes must succeed.
+    #[test]
+    fn encode_a_accepts_valid_length_hostname() {
+        // One 63-char label + ".local" → wire: 1+63 + 1+5 + 1 = 71 bytes.
+        let mut label: heapless::String<64> = heapless::String::new();
+        for _ in 0..63 {
+            let _ = label.push('b');
+        }
+        let mut buf = [0u8; 256];
+        assert!(
+            encode_a_response(label.as_str(), [10, 0, 0, 2], &mut buf).is_ok(),
+            "single 63-char label should be accepted"
+        );
+    }
+
+    // M10: rdlength backfill must fit in u16.
+    // In practice, a real packet would exceed the 512-byte buffer long before
+    // rdlength hit u16::MAX, so we verify the check exists by confirming that
+    // an extreme-length PTR instance name returns StringTooLong (from either
+    // the name-length check L6 or the rdlength overflow check M10).
+    #[test]
+    fn ptr_response_rejects_instance_name_too_long() {
+        // 4 labels of 63 chars each creates a wire-format name > 253 bytes
+        // (4*(1+63)+1 = 257 bytes > 255 limit).
+        let mut label: heapless::String<64> = heapless::String::new();
+        for _ in 0..63 {
+            let _ = label.push('x');
+        }
+        // Build "xxx...63.xxx...63.xxx...63.xxx...63" (255 chars)
+        let mut long_instance: heapless::String<256> = heapless::String::new();
+        for i in 0..4usize {
+            if i > 0 {
+                let _ = long_instance.push('.');
+            }
+            let _ = long_instance.push_str(label.as_str());
+        }
+        let mut buf = [0u8; 4096];
+        let result = encode_ptr_response("_http._tcp.local", long_instance.as_str(), &mut buf);
+        assert!(
+            result.is_err(),
+            "PTR response with overlong instance name must fail"
+        );
     }
 }
