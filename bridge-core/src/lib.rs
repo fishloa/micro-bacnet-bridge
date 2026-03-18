@@ -9,6 +9,7 @@
 //! # Modules
 //!
 //! - [`bacnet`]    — BACnet PDU types (object IDs, property IDs, values, APDU/NPDU enums)
+//! - [`bridge`]    — Bridge state: discovered devices and points (`BridgeStateInner`)
 //! - [`npdu`]      — NPDU encode/decode
 //! - [`config`]    — Configuration persistence types (`BridgeConfig`, `PointRule`)
 //! - [`auth`]      — Password hashing, token verification, role-based permission checks
@@ -18,12 +19,14 @@
 //! - [`error`]     — Shared error types (`EncodeError`, `DecodeError`, `BridgeError`)
 //! - [`ntp`]       — SNTP packet codec (RFC 4330)
 //! - [`syslog`]    — RFC 5424 syslog message formatter
-//! - [`ota`]       — OTA firmware update validation (ARM vector-table check)
+//! - [`ota`]       — OTA firmware update validation, UF2 parsing, and manifest parsing
 //! - [`snmp`]      — Minimal SNMP v2c agent codec (RFC 3416)
 //! - [`mqtt`]      — MQTT 3.1.1 publish-only client codec + HA auto-discovery
+//! - [`tls`]       — TLS certificate management types (PEM→DER, CN extraction)
 
 pub mod auth;
 pub mod bacnet;
+pub mod bridge;
 pub mod config;
 pub mod error;
 pub mod ipc;
@@ -35,6 +38,7 @@ pub mod ota;
 pub mod pipeline;
 pub mod snmp;
 pub mod syslog;
+pub mod tls;
 
 // Top-level re-exports of the most commonly used types.
 pub use bacnet::{
@@ -42,6 +46,7 @@ pub use bacnet::{
     ApduType, BacnetValue, EngineeringUnits, Exposure, ObjectId, ObjectType, PointConfig,
     PropertyId, ServiceChoice,
 };
+pub use bridge::{BridgeStateInner, DeviceEntry, PointEntry, MAX_DEVICES, MAX_POINTS_PER_DEVICE};
 pub use config::{
     BacnetDeviceConfig, BridgeConfig, ExposureConfig, MqttConfig, NetworkConfig, NtpConfig,
     OtaConfig, PointMode, PointRule, Processor, SnmpConfig, SyslogConfig, TlsConfig, TokenConfig,
@@ -66,8 +71,9 @@ pub use ntp::{
     NTP_UNIX_OFFSET, SNTP_PACKET_LEN,
 };
 pub use ota::{
-    is_uf2, parse_uf2_block, validate_firmware_image, MAX_FIRMWARE_SIZE, UF2_BLOCK_SIZE,
-    UF2_FAMILY_RP2040, UF2_MAGIC1, UF2_MAGIC2, UF2_MAGIC3, UF2_PAYLOAD_SIZE,
+    is_newer_version, is_uf2, parse_manifest, parse_uf2_block, validate_firmware_image,
+    ManifestEntry, MAX_FIRMWARE_SIZE, UF2_BLOCK_SIZE, UF2_FAMILY_RP2040, UF2_MAGIC1, UF2_MAGIC2,
+    UF2_MAGIC3, UF2_PAYLOAD_SIZE,
 };
 pub use snmp::{
     decode_get_request, encode_get_response, SnmpRequest, SnmpValue, VarBind, ERROR_GEN_ERR,
@@ -77,3 +83,4 @@ pub use snmp::{
     TAG_GET_RESPONSE,
 };
 pub use syslog::{format_syslog, syslog_pri, SyslogFacility, SyslogSeverity};
+pub use tls::{extract_subject_cn, is_cert_pem, is_key_pem, pem_to_der, MAX_CERT_PEM, MAX_KEY_DER};

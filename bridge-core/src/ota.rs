@@ -1,7 +1,8 @@
-//! OTA firmware update support — platform-independent validation.
+//! OTA firmware update support — platform-independent validation and manifest parsing.
 //!
 //! This module contains the firmware image validation logic that runs on both
-//! the device (no_std) and the host (for unit testing).
+//! the device (no_std) and the host (for unit testing), plus manifest parsing
+//! for the auto-update channel system.
 
 /// Maximum firmware image size accepted over HTTP (1.5 MB).
 ///
@@ -140,6 +141,304 @@ pub fn parse_uf2_block(block: &[u8]) -> Result<(u32, &[u8], u32, u32), &'static 
         block_num,
         total_blocks,
     ))
+}
+
+// ---------------------------------------------------------------------------
+// Manifest parsing
+// ---------------------------------------------------------------------------
+
+use crate::error::DecodeError;
+use heapless::String;
+
+/// A parsed firmware manifest entry.
+///
+/// The manifest JSON format served by the update server is:
+/// ```json
+/// {
+///   "channels": {
+///     "release": {
+///       "version": "0.1.42",
+///       "url": "https://example.com/firmware.uf2",
+///       "sha256": "aabbcc...",
+///       "size": 524288
+///     },
+///     "beta": { ... }
+///   }
+/// }
+/// ```
+#[derive(Debug, PartialEq)]
+pub struct ManifestEntry {
+    /// Firmware version string (e.g. `"0.1.42-pico2"`).
+    pub version: String<32>,
+    /// Download URL for the firmware binary.
+    pub url: String<128>,
+    /// SHA-256 checksum of the firmware file (32 raw bytes).
+    pub sha256: [u8; 32],
+    /// Expected file size in bytes.
+    pub size: u32,
+}
+
+/// Parse a manifest JSON response for a given channel.
+///
+/// Locates the channel key inside `{"channels":{...}}` and extracts the
+/// `version`, `url`, `sha256`, and `size` fields using a minimal JSON scanner
+/// (no allocator required).
+///
+/// # Errors
+///
+/// Returns [`DecodeError::InvalidData`] if:
+/// - The JSON structure is missing the `channels` or channel key.
+/// - Any required field is absent or malformed.
+///
+/// Returns [`DecodeError::LengthOutOfBounds`] if a string value exceeds the
+/// corresponding capacity constant.
+pub fn parse_manifest(json: &[u8], channel: &str) -> Result<ManifestEntry, DecodeError> {
+    // Locate "channels":
+    let channels_key = b"\"channels\"";
+    let ch_pos = find_bytes(json, channels_key).ok_or(DecodeError::InvalidData)?;
+
+    // Find the opening '{' of the channels object.
+    let brace_pos =
+        find_after(json, ch_pos + channels_key.len(), b'{').ok_or(DecodeError::InvalidData)?;
+
+    // Build the quoted channel name key.
+    let mut chan_key = [0u8; 34];
+    let chan_key_len = build_quoted_key(channel, &mut chan_key)?;
+    let chan_key = &chan_key[..chan_key_len];
+
+    // Find the channel key inside the channels object.
+    let chan_pos = find_bytes(&json[brace_pos..], chan_key).ok_or(DecodeError::InvalidData)?;
+    let chan_start = brace_pos + chan_pos + chan_key.len();
+
+    // Find the opening '{' of this channel's object.
+    let chan_brace = find_after(json, chan_start, b'{').ok_or(DecodeError::InvalidData)?;
+
+    // Find the matching closing '}' — we'll search for fields within this range.
+    let chan_end = find_closing_brace(json, chan_brace).ok_or(DecodeError::InvalidData)?;
+    let chan_obj = &json[chan_brace..=chan_end];
+
+    // Extract fields.
+    let version_raw = extract_string_field(chan_obj, b"version")?;
+    let url_raw = extract_string_field(chan_obj, b"url")?;
+    let sha256_raw = extract_string_field(chan_obj, b"sha256")?;
+    let size_raw = extract_number_field(chan_obj, b"size")?;
+
+    // Build ManifestEntry.
+    let mut version: String<32> = String::new();
+    push_bytes(&mut version, version_raw)?;
+
+    let mut url: String<128> = String::new();
+    push_bytes(&mut url, url_raw)?;
+
+    let sha256 = parse_sha256_hex(sha256_raw)?;
+
+    Ok(ManifestEntry {
+        version,
+        url,
+        sha256,
+        size: size_raw,
+    })
+}
+
+/// Compare two version strings (semver-like: `"major.minor.patch[-suffix]"`).
+///
+/// Returns `true` if `available` is strictly newer than `current` by numeric
+/// component comparison. Suffixes (text after `-`) are ignored for ordering.
+///
+/// # Examples
+///
+/// ```
+/// use bridge_core::ota::is_newer_version;
+/// assert!(is_newer_version("0.1.41", "0.1.42"));
+/// assert!(is_newer_version("0.1.99", "0.2.0"));
+/// assert!(!is_newer_version("0.1.42", "0.1.42"));
+/// assert!(!is_newer_version("1.0.0", "0.9.9"));
+/// ```
+pub fn is_newer_version(current: &str, available: &str) -> bool {
+    let cur = parse_semver(current);
+    let avail = parse_semver(available);
+    avail > cur
+}
+
+// ---------------------------------------------------------------------------
+// Manifest parsing internals
+// ---------------------------------------------------------------------------
+
+/// Scan for the first occurrence of `needle` in `haystack`.
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Scan for the first occurrence of byte `b` in `data` at or after `start`.
+fn find_after(data: &[u8], start: usize, b: u8) -> Option<usize> {
+    data[start..]
+        .iter()
+        .position(|&x| x == b)
+        .map(|p| start + p)
+}
+
+/// Build `"<key>"` into `buf` (including quotes). Returns bytes written.
+fn build_quoted_key(key: &str, buf: &mut [u8; 34]) -> Result<usize, DecodeError> {
+    let kbytes = key.as_bytes();
+    if kbytes.len() + 2 > buf.len() {
+        return Err(DecodeError::LengthOutOfBounds);
+    }
+    buf[0] = b'"';
+    buf[1..1 + kbytes.len()].copy_from_slice(kbytes);
+    buf[1 + kbytes.len()] = b'"';
+    Ok(2 + kbytes.len())
+}
+
+/// Find the matching `}` for the `{` at `open_pos` in `data`.
+fn find_closing_brace(data: &[u8], open_pos: usize) -> Option<usize> {
+    let mut depth = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+    for (i, &b) in data[open_pos..].iter().enumerate() {
+        if escape {
+            escape = false;
+            continue;
+        }
+        if in_string {
+            if b == b'\\' {
+                escape = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(open_pos + i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Extract the string value of a JSON field `"key": "value"` from `obj`.
+/// Returns the raw bytes of the value (between the quotes).
+fn extract_string_field<'a>(obj: &'a [u8], key: &[u8]) -> Result<&'a [u8], DecodeError> {
+    // Build `"key"` to search for.
+    let mut needle = [0u8; 66];
+    if key.len() + 2 > needle.len() {
+        return Err(DecodeError::InvalidData);
+    }
+    needle[0] = b'"';
+    needle[1..1 + key.len()].copy_from_slice(key);
+    needle[1 + key.len()] = b'"';
+    let needle = &needle[..2 + key.len()];
+
+    let key_pos = find_bytes(obj, needle).ok_or(DecodeError::InvalidData)?;
+    let after_key = key_pos + needle.len();
+
+    // Skip whitespace and ':'
+    let colon = find_after(obj, after_key, b':').ok_or(DecodeError::InvalidData)?;
+    let value_quote = find_after(obj, colon + 1, b'"').ok_or(DecodeError::InvalidData)?;
+    let value_start = value_quote + 1;
+
+    // Find closing quote (not preceded by backslash — simplified).
+    let closing = obj[value_start..]
+        .iter()
+        .position(|&b| b == b'"')
+        .ok_or(DecodeError::InvalidData)?;
+
+    Ok(&obj[value_start..value_start + closing])
+}
+
+/// Extract the numeric value of a JSON field `"key": <number>` from `obj`.
+fn extract_number_field(obj: &[u8], key: &[u8]) -> Result<u32, DecodeError> {
+    let mut needle = [0u8; 66];
+    if key.len() + 2 > needle.len() {
+        return Err(DecodeError::InvalidData);
+    }
+    needle[0] = b'"';
+    needle[1..1 + key.len()].copy_from_slice(key);
+    needle[1 + key.len()] = b'"';
+    let needle = &needle[..2 + key.len()];
+
+    let key_pos = find_bytes(obj, needle).ok_or(DecodeError::InvalidData)?;
+    let after_key = key_pos + needle.len();
+    let colon = find_after(obj, after_key, b':').ok_or(DecodeError::InvalidData)?;
+
+    // Skip whitespace.
+    let mut digit_start = colon + 1;
+    while digit_start < obj.len()
+        && (obj[digit_start] == b' ' || obj[digit_start] == b'\t' || obj[digit_start] == b'\n')
+    {
+        digit_start += 1;
+    }
+
+    let mut value = 0u32;
+    let mut found_digit = false;
+    for &b in &obj[digit_start..] {
+        if b.is_ascii_digit() {
+            value = value.saturating_mul(10).saturating_add((b - b'0') as u32);
+            found_digit = true;
+        } else {
+            break;
+        }
+    }
+    if !found_digit {
+        return Err(DecodeError::InvalidData);
+    }
+    Ok(value)
+}
+
+/// Parse a 64-char hex string into 32 raw bytes.
+fn parse_sha256_hex(hex: &[u8]) -> Result<[u8; 32], DecodeError> {
+    if hex.len() != 64 {
+        return Err(DecodeError::InvalidData);
+    }
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        let hi = hex_nibble(hex[2 * i])?;
+        let lo = hex_nibble(hex[2 * i + 1])?;
+        out[i] = (hi << 4) | lo;
+    }
+    Ok(out)
+}
+
+fn hex_nibble(b: u8) -> Result<u8, DecodeError> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(b - b'a' + 10),
+        b'A'..=b'F' => Ok(b - b'A' + 10),
+        _ => Err(DecodeError::InvalidData),
+    }
+}
+
+/// Push ASCII bytes into a `heapless::String`.
+fn push_bytes<const N: usize>(s: &mut String<N>, bytes: &[u8]) -> Result<(), DecodeError> {
+    for &b in bytes {
+        s.push(b as char)
+            .map_err(|_| DecodeError::LengthOutOfBounds)?;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Semver comparison
+// ---------------------------------------------------------------------------
+
+/// Parse a semver-like version string into `(major, minor, patch)`.
+/// Suffix after `-` is discarded.
+fn parse_semver(s: &str) -> (u32, u32, u32) {
+    let base = s.split('-').next().unwrap_or(s);
+    let mut parts = base.split('.');
+    let major = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let minor = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    let patch = parts.next().and_then(|p| p.parse().ok()).unwrap_or(0);
+    (major, minor, patch)
 }
 
 // ---------------------------------------------------------------------------
@@ -385,5 +684,106 @@ mod tests {
             !validate_firmware_image(&hdr),
             "SP below RAM_BASE should fail"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // parse_manifest tests
+    // -----------------------------------------------------------------------
+
+    const VALID_SHA256: &str = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899";
+
+    fn valid_manifest_json(channel: &str) -> heapless::String<512> {
+        use core::fmt::Write;
+        let mut s: heapless::String<512> = heapless::String::new();
+        write!(
+            s,
+            r#"{{"channels":{{"{}":{{"version":"0.1.42","url":"https://example.com/fw.uf2","sha256":"{}","size":524288}}}}}}"#,
+            channel, VALID_SHA256
+        ).ok();
+        s
+    }
+
+    #[test]
+    fn parse_manifest_valid_release() {
+        let json = valid_manifest_json("release");
+        let entry = parse_manifest(json.as_bytes(), "release").unwrap();
+        assert_eq!(entry.version.as_str(), "0.1.42");
+        assert_eq!(entry.url.as_str(), "https://example.com/fw.uf2");
+        assert_eq!(entry.size, 524288);
+        // SHA256: first two bytes should be 0xAA 0xBB
+        assert_eq!(entry.sha256[0], 0xAA);
+        assert_eq!(entry.sha256[1], 0xBB);
+    }
+
+    #[test]
+    fn parse_manifest_valid_beta_channel() {
+        let mut json: heapless::String<512> = heapless::String::new();
+        use core::fmt::Write;
+        write!(
+            json,
+            r#"{{"channels":{{"release":{{"version":"0.1.40","url":"https://example.com/r.uf2","sha256":"{}","size":100000}},"beta":{{"version":"0.2.0","url":"https://example.com/b.uf2","sha256":"{}","size":200000}}}}}}"#,
+            VALID_SHA256, VALID_SHA256
+        ).ok();
+        let entry = parse_manifest(json.as_bytes(), "beta").unwrap();
+        assert_eq!(entry.version.as_str(), "0.2.0");
+        assert_eq!(entry.size, 200000);
+    }
+
+    #[test]
+    fn parse_manifest_missing_channel_returns_error() {
+        let json = valid_manifest_json("release");
+        let result = parse_manifest(json.as_bytes(), "nightly");
+        assert!(result.is_err(), "missing channel should return error");
+    }
+
+    #[test]
+    fn parse_manifest_missing_channels_key_returns_error() {
+        let json = b"{\"version\":\"0.1.0\"}";
+        let result = parse_manifest(json, "release");
+        assert_eq!(result, Err(DecodeError::InvalidData));
+    }
+
+    #[test]
+    fn parse_manifest_bad_sha256_length_returns_error() {
+        let json = br#"{"channels":{"release":{"version":"0.1.0","url":"https://x.com/f.uf2","sha256":"tooshort","size":100}}}"#;
+        let result = parse_manifest(json, "release");
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // is_newer_version tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn newer_patch_version() {
+        assert!(is_newer_version("0.1.41", "0.1.42"));
+    }
+
+    #[test]
+    fn newer_minor_version() {
+        assert!(is_newer_version("0.1.99", "0.2.0"));
+    }
+
+    #[test]
+    fn newer_major_version() {
+        assert!(is_newer_version("0.9.99", "1.0.0"));
+    }
+
+    #[test]
+    fn equal_version_returns_false() {
+        assert!(!is_newer_version("0.1.42", "0.1.42"));
+    }
+
+    #[test]
+    fn older_version_returns_false() {
+        assert!(!is_newer_version("1.0.0", "0.9.9"));
+    }
+
+    #[test]
+    fn suffix_ignored_in_comparison() {
+        // "0.1.42-pico2" has the same base as "0.1.42" → not newer
+        assert!(!is_newer_version("0.1.42-pico2", "0.1.42"));
+        // "0.1.43-pico2" is newer than "0.1.42"
+        assert!(is_newer_version("0.1.42", "0.1.43-pico2"));
     }
 }
