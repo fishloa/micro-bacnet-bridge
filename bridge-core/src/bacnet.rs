@@ -368,6 +368,541 @@ impl ServiceChoice {
 }
 
 // ---------------------------------------------------------------------------
+// EngineeringUnits
+// ---------------------------------------------------------------------------
+
+/// BACnet engineering units (ASHRAE 135 enumeration).
+///
+/// Converts to/from numeric codes and maps to Home Assistant unit strings.
+/// When a BACnet unit is not directly supported by HA, this enum provides
+/// conversion to the closest HA unit with a scaling factor.
+///
+/// Numeric codes match `BACNET_ENGINEERING_UNITS` in bacnet-stack/bacenum.h.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u32)]
+pub enum EngineeringUnits {
+    // Dimensionless / Percent
+    /// Percentage (0–100 or 0–1 depending on context)
+    Percent = 95,
+    /// Parts per million (ppm)
+    Ppm = 97,
+    /// RPM (revolutions per minute)
+    Rpm = 123,
+
+    // Temperature
+    /// Degrees Celsius
+    DegreesCelsius = 0,
+    /// Degrees Fahrenheit
+    DegreesFahrenheit = 1,
+    /// Kelvin
+    Kelvin = 2,
+
+    // Pressure
+    /// Pascals
+    Pascal = 3,
+    /// Kilopascals
+    Kilopascal = 4,
+    /// Bar
+    Bar = 5,
+    /// Pounds per square inch (PSI)
+    Psi = 6,
+    /// Millimeters of water column (mmH₂O)
+    MillimetersWater = 7,
+    /// Centimeters of water column (cmH₂O)
+    CentimetersWater = 8,
+    /// Inches of mercury (inHg)
+    InchesOfMercury = 9,
+    /// Centimeters of mercury (cmHg)
+    CentimetersOfMercury = 10,
+    /// Millimeters of mercury (mmHg)
+    MillimetersOfMercury = 11,
+
+    // Energy / Power
+    /// Joules
+    Joule = 12,
+    /// Kilojoules
+    Kilojoule = 13,
+    /// Kilowatt-hours
+    KilowattHour = 14,
+    /// Megawatt-hours
+    MegawattHour = 15,
+    /// Watt-hours
+    WattHour = 16,
+    /// BTU
+    Btu = 17,
+    /// BTU per hour
+    BtuPerHour = 18,
+    /// Watts
+    Watt = 19,
+    /// Kilowatts
+    Kilowatt = 20,
+    /// Megawatts
+    Megawatt = 21,
+    /// Therms
+    Therm = 22,
+    /// Ton-hours
+    TonHour = 23,
+
+    // Flow
+    /// Cubic meters per second
+    CubicMeterPerSecond = 24,
+    /// Cubic feet per second
+    CubicFootPerSecond = 25,
+    /// Cubic feet per minute
+    CubicFootPerMinute = 26,
+    /// Cubic meters per hour
+    CubicMeterPerHour = 27,
+    /// Gallons per minute (US)
+    GallonPerMinute = 28,
+    /// Liters per second
+    LiterPerSecond = 29,
+    /// Liters per minute
+    LiterPerMinute = 30,
+
+    // Distance
+    /// Millimeters
+    Millimeter = 32,
+    /// Centimeters
+    Centimeter = 33,
+    /// Meters
+    Meter = 34,
+    /// Inches
+    Inch = 35,
+    /// Feet
+    Foot = 36,
+    /// Yards
+    Yard = 37,
+    /// Kilometers
+    Kilometer = 38,
+    /// Miles
+    Mile = 39,
+
+    // Mass
+    /// Grams
+    Gram = 41,
+    /// Kilograms
+    Kilogram = 42,
+    /// Metric tons (tonnes)
+    MetricTon = 43,
+    /// Pounds
+    Pound = 44,
+    /// Ounces
+    Ounce = 45,
+    /// Ton (short US ton)
+    Ton = 46,
+
+    // Volume
+    /// Cubic meters
+    CubicMeter = 48,
+    /// Cubic feet
+    CubicFoot = 49,
+    /// Gallons (US)
+    Gallon = 50,
+    /// Liters
+    Liter = 51,
+    /// Milliliters
+    Milliliter = 52,
+
+    // Electrical
+    /// Amperes
+    Ampere = 58,
+    /// Milliamperes
+    Milliampere = 59,
+    /// Volts
+    Volt = 60,
+    /// Millivolts
+    Millivolt = 61,
+    /// Hertz
+    Hertz = 65,
+    /// Gigahertz
+    Gigahertz = 66,
+
+    // Light
+    /// Lux
+    Lux = 71,
+    /// Lumens
+    Lumen = 72,
+
+    // Sound
+    /// Decibels
+    Decibel = 73,
+    /// Decibels milliwatts
+    DecibelMilliwatt = 74,
+
+    // Velocity / Speed
+    /// Meters per second
+    MeterPerSecond = 62,
+    /// Kilometers per hour
+    KilometerPerHour = 63,
+    /// Miles per hour
+    MilePerHour = 64,
+    /// Millimeters per day (rainfall)
+    MillimeterPerDay = 67,
+    /// Inches per day (rainfall)
+    InchPerDay = 68,
+
+    // Time
+    /// Seconds
+    Second = 69,
+    /// Minutes
+    Minute = 70,
+    /// Hours
+    Hour = 75,
+    /// Days
+    Day = 76,
+    /// Weeks
+    Week = 77,
+    /// Months
+    Month = 78,
+    /// Years
+    Year = 79,
+
+    // Power / Energy (continued)
+    /// Horsepower
+    Horsepower = 80,
+
+    // Other
+    /// No units / dimensionless (placeholder, rarely used)
+    NoUnits = 196,
+}
+
+impl EngineeringUnits {
+    /// Convert from BACnet numeric code. Returns `None` if the code is unknown.
+    pub fn from_code(code: u32) -> Option<Self> {
+        match code {
+            0 => Some(Self::DegreesCelsius),
+            1 => Some(Self::DegreesFahrenheit),
+            2 => Some(Self::Kelvin),
+            3 => Some(Self::Pascal),
+            4 => Some(Self::Kilopascal),
+            5 => Some(Self::Bar),
+            6 => Some(Self::Psi),
+            7 => Some(Self::MillimetersWater),
+            8 => Some(Self::CentimetersWater),
+            9 => Some(Self::InchesOfMercury),
+            10 => Some(Self::CentimetersOfMercury),
+            11 => Some(Self::MillimetersOfMercury),
+            12 => Some(Self::Joule),
+            13 => Some(Self::Kilojoule),
+            14 => Some(Self::KilowattHour),
+            15 => Some(Self::MegawattHour),
+            16 => Some(Self::WattHour),
+            17 => Some(Self::Btu),
+            18 => Some(Self::BtuPerHour),
+            19 => Some(Self::Watt),
+            20 => Some(Self::Kilowatt),
+            21 => Some(Self::Megawatt),
+            22 => Some(Self::Therm),
+            23 => Some(Self::TonHour),
+            24 => Some(Self::CubicMeterPerSecond),
+            25 => Some(Self::CubicFootPerSecond),
+            26 => Some(Self::CubicFootPerMinute),
+            27 => Some(Self::CubicMeterPerHour),
+            28 => Some(Self::GallonPerMinute),
+            29 => Some(Self::LiterPerSecond),
+            30 => Some(Self::LiterPerMinute),
+            32 => Some(Self::Millimeter),
+            33 => Some(Self::Centimeter),
+            34 => Some(Self::Meter),
+            35 => Some(Self::Inch),
+            36 => Some(Self::Foot),
+            37 => Some(Self::Yard),
+            38 => Some(Self::Kilometer),
+            39 => Some(Self::Mile),
+            41 => Some(Self::Gram),
+            42 => Some(Self::Kilogram),
+            43 => Some(Self::MetricTon),
+            44 => Some(Self::Pound),
+            45 => Some(Self::Ounce),
+            46 => Some(Self::Ton),
+            48 => Some(Self::CubicMeter),
+            49 => Some(Self::CubicFoot),
+            50 => Some(Self::Gallon),
+            51 => Some(Self::Liter),
+            52 => Some(Self::Milliliter),
+            58 => Some(Self::Ampere),
+            59 => Some(Self::Milliampere),
+            60 => Some(Self::Volt),
+            61 => Some(Self::Millivolt),
+            62 => Some(Self::MeterPerSecond),
+            63 => Some(Self::KilometerPerHour),
+            64 => Some(Self::MilePerHour),
+            65 => Some(Self::Hertz),
+            66 => Some(Self::Gigahertz),
+            67 => Some(Self::MillimeterPerDay),
+            68 => Some(Self::InchPerDay),
+            69 => Some(Self::Second),
+            70 => Some(Self::Minute),
+            71 => Some(Self::Lux),
+            72 => Some(Self::Lumen),
+            73 => Some(Self::Decibel),
+            74 => Some(Self::DecibelMilliwatt),
+            75 => Some(Self::Hour),
+            76 => Some(Self::Day),
+            77 => Some(Self::Week),
+            78 => Some(Self::Month),
+            79 => Some(Self::Year),
+            80 => Some(Self::Horsepower),
+            95 => Some(Self::Percent),
+            97 => Some(Self::Ppm),
+            123 => Some(Self::Rpm),
+            196 => Some(Self::NoUnits),
+            _ => None,
+        }
+    }
+
+    /// Return the BACnet numeric code for this unit.
+    pub fn code(self) -> u32 {
+        self as u32
+    }
+
+    /// Return the Home Assistant unit string for this unit.
+    ///
+    /// If the BACnet unit is not directly supported by HA, returns a string
+    /// that represents the closest HA-supported unit. Call [`convert_for_ha`]
+    /// to get the scaled value.
+    ///
+    /// For unknown/unmapped units, returns an empty string.
+    pub fn ha_unit_str(self) -> &'static str {
+        match self {
+            // Temperature
+            Self::DegreesCelsius => "°C",
+            Self::DegreesFahrenheit => "°F",
+            Self::Kelvin => "K",
+
+            // Pressure (pass-through where HA has them)
+            Self::Pascal => "Pa",
+            Self::Kilopascal => "kPa",
+            Self::Bar => "bar",
+            Self::Psi => "psi",
+            Self::InchesOfMercury => "inHg",
+            Self::MillimetersOfMercury => "mmHg",
+
+            // Pressure conversions (BACnet → HA Pa)
+            // mmH₂O, cmH₂O → Pa (HA doesn't have mmH₂O or cmH₂O)
+            Self::MillimetersWater => "Pa", // multiply by 9.80665
+            Self::CentimetersWater => "Pa", // multiply by 98.0665
+            Self::CentimetersOfMercury => "mmHg", // multiply by 10 (close to HA's mmHg)
+
+            // Energy / Power
+            Self::Joule => "Wh",     // divide by 3600
+            Self::Kilojoule => "Wh", // divide by 3.6
+            Self::WattHour => "Wh",
+            Self::KilowattHour => "kWh",
+            Self::MegawattHour => "MWh",
+            Self::Btu => "Wh",       // multiply by 0.293071
+            Self::BtuPerHour => "W", // multiply by 0.293071
+            Self::Watt => "W",
+            Self::Kilowatt => "kW",
+            Self::Megawatt => "MW",
+            Self::Therm => "Wh",     // multiply by 293071
+            Self::TonHour => "Wh",   // multiply by 3517000 (depends on ton type)
+            Self::Horsepower => "W", // multiply by 745.7
+
+            // Flow
+            Self::CubicMeterPerSecond => "m³/s",
+            Self::CubicFootPerSecond => "m³/s", // multiply by 0.0283168
+            Self::CubicFootPerMinute => "L/min", // multiply by 0.471947
+            Self::CubicMeterPerHour => "m³/h",
+            Self::GallonPerMinute => "L/min", // multiply by 3.785
+            Self::LiterPerSecond => "L/min",  // multiply by 60
+            Self::LiterPerMinute => "L/min",
+
+            // Distance
+            Self::Millimeter => "mm",
+            Self::Centimeter => "cm",
+            Self::Meter => "m",
+            Self::Inch => "in",
+            Self::Foot => "ft",
+            Self::Yard => "yd",
+            Self::Kilometer => "km",
+            Self::Mile => "mi",
+
+            // Mass
+            Self::Gram => "g",
+            Self::Kilogram => "kg",
+            Self::MetricTon => "kg", // multiply by 1000
+            Self::Pound => "lb",
+            Self::Ounce => "oz",
+            Self::Ton => "lb", // multiply by 2000 (short ton)
+
+            // Volume
+            Self::CubicMeter => "m³",
+            Self::CubicFoot => "ft³",
+            Self::Gallon => "gal",
+            Self::Liter => "L",
+            Self::Milliliter => "mL",
+
+            // Electrical
+            Self::Ampere => "A",
+            Self::Milliampere => "mA",
+            Self::Volt => "V",
+            Self::Millivolt => "mV",
+            Self::Hertz => "Hz",
+            Self::Gigahertz => "GHz",
+
+            // Light
+            Self::Lux => "lx",
+            Self::Lumen => "lm",
+
+            // Sound
+            Self::Decibel => "dB",
+            Self::DecibelMilliwatt => "dBm",
+
+            // Velocity / Speed
+            Self::MeterPerSecond => "m/s",
+            Self::KilometerPerHour => "km/h",
+            Self::MilePerHour => "mph",
+            Self::MillimeterPerDay => "mm/d",
+            Self::InchPerDay => "in/d",
+
+            // Time
+            Self::Second => "s",
+            Self::Minute => "min",
+            Self::Hour => "h",
+            Self::Day => "d",
+            Self::Week => "week",
+            Self::Month => "month",
+            Self::Year => "year",
+
+            // Dimensionless
+            Self::Percent => "%",
+            Self::Ppm => "ppm",
+            Self::Rpm => "rpm",
+            Self::NoUnits => "",
+        }
+    }
+
+    /// Convert a value from BACnet units to Home Assistant units.
+    ///
+    /// Returns a tuple: `(converted_value, ha_unit_string)`.
+    ///
+    /// For units that HA supports natively, returns the value unchanged.
+    /// For units that require conversion, applies the appropriate scaling factor.
+    /// For unknown codes, returns the value unchanged with an empty unit string.
+    ///
+    /// # Examples
+    /// ```
+    /// use bridge_core::bacnet::EngineeringUnits;
+    ///
+    /// // mmH₂O → Pa
+    /// let (val, unit) = EngineeringUnits::MillimetersWater.convert_for_ha(100.0_f32);
+    /// assert!((val - 980.665_f32).abs() < 0.01_f32);
+    /// assert_eq!(unit, "Pa");
+    ///
+    /// // °C → °C (pass-through)
+    /// let (val, unit) = EngineeringUnits::DegreesCelsius.convert_for_ha(25.0_f32);
+    /// assert_eq!(val, 25.0_f32);
+    /// assert_eq!(unit, "°C");
+    /// ```
+    pub fn convert_for_ha(self, value: f32) -> (f32, &'static str) {
+        let unit_str = self.ha_unit_str();
+        let converted = match self {
+            // Pass-through (no conversion needed)
+            Self::DegreesCelsius
+            | Self::DegreesFahrenheit
+            | Self::Kelvin
+            | Self::Pascal
+            | Self::Kilopascal
+            | Self::Bar
+            | Self::Psi
+            | Self::InchesOfMercury
+            | Self::MillimetersOfMercury
+            | Self::Watt
+            | Self::Kilowatt
+            | Self::Megawatt
+            | Self::WattHour
+            | Self::KilowattHour
+            | Self::MegawattHour
+            | Self::Volt
+            | Self::Millivolt
+            | Self::Ampere
+            | Self::Milliampere
+            | Self::Hertz
+            | Self::Gigahertz
+            | Self::Percent
+            | Self::Ppm
+            | Self::Rpm
+            | Self::Millimeter
+            | Self::Centimeter
+            | Self::Meter
+            | Self::Inch
+            | Self::Foot
+            | Self::Yard
+            | Self::Kilometer
+            | Self::Mile
+            | Self::Gram
+            | Self::Kilogram
+            | Self::Pound
+            | Self::Ounce
+            | Self::CubicMeter
+            | Self::CubicMeterPerSecond
+            | Self::CubicMeterPerHour
+            | Self::CubicFoot
+            | Self::Gallon
+            | Self::Liter
+            | Self::LiterPerMinute
+            | Self::Milliliter
+            | Self::Lux
+            | Self::Lumen
+            | Self::Decibel
+            | Self::DecibelMilliwatt
+            | Self::MeterPerSecond
+            | Self::KilometerPerHour
+            | Self::MilePerHour
+            | Self::MillimeterPerDay
+            | Self::InchPerDay
+            | Self::Second
+            | Self::Minute
+            | Self::Hour
+            | Self::Day
+            | Self::Week
+            | Self::Month
+            | Self::Year
+            | Self::NoUnits => value,
+
+            // Pressure conversions → Pa
+            Self::MillimetersWater => value * 9.80665, // mmH₂O → Pa
+            Self::CentimetersWater => value * 98.0665, // cmH₂O → Pa
+            Self::CentimetersOfMercury => value * 10.0, // cmHg → mmHg (approx)
+
+            // Energy conversions → Wh
+            Self::Joule => value / 3600.0,        // J → Wh
+            Self::Kilojoule => value / 3.6,       // kJ → Wh
+            Self::Btu => value * 0.293071,        // BTU → Wh
+            Self::BtuPerHour => value * 0.293071, // BTU/h → W
+            Self::Therm => value * 293071.0,      // therm → Wh
+            Self::TonHour => value * 3517000.0,   // ton·h → Wh
+
+            // Power conversion → W
+            Self::Horsepower => value * 745.7, // hp → W
+
+            // Flow conversions → L/min
+            Self::GallonPerMinute => value * 3.785, // GPM → L/min
+            Self::CubicFootPerMinute => value * 0.471947, // CFM → L/min
+            Self::LiterPerSecond => value * 60.0,   // L/s → L/min
+
+            // Volume conversions
+            Self::CubicFootPerSecond => value * 0.0283168, // ft³/s → m³/s
+
+            // Distance conversions (no major conversions needed in HA)
+            // HA supports mm, cm, m, in, ft, mi, km directly
+
+            // Mass conversions
+            Self::MetricTon => value * 1000.0, // metric ton → kg
+            Self::Ton => value * 907.185,      // short ton → kg (converted to lb in HA)
+        };
+        (converted, unit_str)
+    }
+}
+
+impl From<EngineeringUnits> for u32 {
+    fn from(u: EngineeringUnits) -> u32 {
+        u.code()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -554,5 +1089,405 @@ mod tests {
             ServiceChoice::from_unconfirmed_code(7),
             Some(ServiceChoice::WhoHas)
         );
+    }
+
+    // =====================================================================
+    // EngineeringUnits tests
+    // =====================================================================
+
+    #[test]
+    fn engineering_units_from_code_temperature() {
+        assert_eq!(
+            EngineeringUnits::from_code(0),
+            Some(EngineeringUnits::DegreesCelsius)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(1),
+            Some(EngineeringUnits::DegreesFahrenheit)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(2),
+            Some(EngineeringUnits::Kelvin)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_pressure() {
+        assert_eq!(
+            EngineeringUnits::from_code(3),
+            Some(EngineeringUnits::Pascal)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(4),
+            Some(EngineeringUnits::Kilopascal)
+        );
+        assert_eq!(EngineeringUnits::from_code(6), Some(EngineeringUnits::Psi));
+        assert_eq!(
+            EngineeringUnits::from_code(7),
+            Some(EngineeringUnits::MillimetersWater)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_energy_power() {
+        assert_eq!(
+            EngineeringUnits::from_code(19),
+            Some(EngineeringUnits::Watt)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(20),
+            Some(EngineeringUnits::Kilowatt)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(14),
+            Some(EngineeringUnits::KilowattHour)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(80),
+            Some(EngineeringUnits::Horsepower)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_flow() {
+        assert_eq!(
+            EngineeringUnits::from_code(28),
+            Some(EngineeringUnits::GallonPerMinute)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(30),
+            Some(EngineeringUnits::LiterPerMinute)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_distance() {
+        assert_eq!(
+            EngineeringUnits::from_code(32),
+            Some(EngineeringUnits::Millimeter)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(34),
+            Some(EngineeringUnits::Meter)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(35),
+            Some(EngineeringUnits::Inch)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(36),
+            Some(EngineeringUnits::Foot)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_mass() {
+        assert_eq!(
+            EngineeringUnits::from_code(42),
+            Some(EngineeringUnits::Kilogram)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(44),
+            Some(EngineeringUnits::Pound)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_electrical() {
+        assert_eq!(
+            EngineeringUnits::from_code(58),
+            Some(EngineeringUnits::Ampere)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(60),
+            Some(EngineeringUnits::Volt)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(65),
+            Some(EngineeringUnits::Hertz)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_time() {
+        assert_eq!(
+            EngineeringUnits::from_code(69),
+            Some(EngineeringUnits::Second)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(70),
+            Some(EngineeringUnits::Minute)
+        );
+        assert_eq!(
+            EngineeringUnits::from_code(75),
+            Some(EngineeringUnits::Hour)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_dimensionless() {
+        assert_eq!(
+            EngineeringUnits::from_code(95),
+            Some(EngineeringUnits::Percent)
+        );
+        assert_eq!(EngineeringUnits::from_code(97), Some(EngineeringUnits::Ppm));
+        assert_eq!(
+            EngineeringUnits::from_code(123),
+            Some(EngineeringUnits::Rpm)
+        );
+    }
+
+    #[test]
+    fn engineering_units_from_code_unknown() {
+        assert_eq!(EngineeringUnits::from_code(9999), None);
+        assert_eq!(EngineeringUnits::from_code(31), None);
+        assert_eq!(EngineeringUnits::from_code(255), None);
+    }
+
+    #[test]
+    fn engineering_units_round_trip() {
+        let units = [
+            EngineeringUnits::DegreesCelsius,
+            EngineeringUnits::DegreesFahrenheit,
+            EngineeringUnits::Pascal,
+            EngineeringUnits::Kilopascal,
+            EngineeringUnits::Psi,
+            EngineeringUnits::Watt,
+            EngineeringUnits::Kilowatt,
+            EngineeringUnits::KilowattHour,
+            EngineeringUnits::Volt,
+            EngineeringUnits::Ampere,
+            EngineeringUnits::Meter,
+            EngineeringUnits::Foot,
+            EngineeringUnits::Kilogram,
+            EngineeringUnits::Pound,
+            EngineeringUnits::Percent,
+            EngineeringUnits::Horsepower,
+            EngineeringUnits::GallonPerMinute,
+            EngineeringUnits::MillimetersWater,
+        ];
+        for unit in units {
+            let code = unit.code();
+            let recovered = EngineeringUnits::from_code(code)
+                .unwrap_or_else(|| panic!("Failed to recover unit from code {}", code));
+            assert_eq!(unit, recovered, "Round-trip failed for {:?}", unit);
+        }
+    }
+
+    #[test]
+    fn engineering_units_ha_unit_str_passthrough() {
+        // HA units that pass through unchanged
+        assert_eq!(EngineeringUnits::DegreesCelsius.ha_unit_str(), "°C");
+        assert_eq!(EngineeringUnits::DegreesFahrenheit.ha_unit_str(), "°F");
+        assert_eq!(EngineeringUnits::Kelvin.ha_unit_str(), "K");
+        assert_eq!(EngineeringUnits::Pascal.ha_unit_str(), "Pa");
+        assert_eq!(EngineeringUnits::Kilopascal.ha_unit_str(), "kPa");
+        assert_eq!(EngineeringUnits::Bar.ha_unit_str(), "bar");
+        assert_eq!(EngineeringUnits::Psi.ha_unit_str(), "psi");
+        assert_eq!(EngineeringUnits::Watt.ha_unit_str(), "W");
+        assert_eq!(EngineeringUnits::Kilowatt.ha_unit_str(), "kW");
+        assert_eq!(EngineeringUnits::Megawatt.ha_unit_str(), "MW");
+        assert_eq!(EngineeringUnits::KilowattHour.ha_unit_str(), "kWh");
+        assert_eq!(EngineeringUnits::Volt.ha_unit_str(), "V");
+        assert_eq!(EngineeringUnits::Ampere.ha_unit_str(), "A");
+        assert_eq!(EngineeringUnits::Meter.ha_unit_str(), "m");
+        assert_eq!(EngineeringUnits::Foot.ha_unit_str(), "ft");
+        assert_eq!(EngineeringUnits::Kilogram.ha_unit_str(), "kg");
+        assert_eq!(EngineeringUnits::Pound.ha_unit_str(), "lb");
+        assert_eq!(EngineeringUnits::Liter.ha_unit_str(), "L");
+        assert_eq!(EngineeringUnits::Percent.ha_unit_str(), "%");
+        assert_eq!(EngineeringUnits::Hertz.ha_unit_str(), "Hz");
+    }
+
+    #[test]
+    fn engineering_units_ha_unit_str_conversions() {
+        // BACnet units that require conversion
+        assert_eq!(EngineeringUnits::MillimetersWater.ha_unit_str(), "Pa");
+        assert_eq!(EngineeringUnits::CentimetersWater.ha_unit_str(), "Pa");
+        assert_eq!(EngineeringUnits::Horsepower.ha_unit_str(), "W");
+        assert_eq!(EngineeringUnits::GallonPerMinute.ha_unit_str(), "L/min");
+        assert_eq!(EngineeringUnits::CubicFootPerMinute.ha_unit_str(), "L/min");
+        assert_eq!(EngineeringUnits::Joule.ha_unit_str(), "Wh");
+        assert_eq!(EngineeringUnits::Kilojoule.ha_unit_str(), "Wh");
+        assert_eq!(EngineeringUnits::Btu.ha_unit_str(), "Wh");
+        assert_eq!(EngineeringUnits::BtuPerHour.ha_unit_str(), "W");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_passthrough() {
+        // Units that pass through unchanged
+        let (val, unit) = EngineeringUnits::DegreesCelsius.convert_for_ha(25.0);
+        assert_eq!(val, 25.0);
+        assert_eq!(unit, "°C");
+
+        let (val, unit) = EngineeringUnits::DegreesFahrenheit.convert_for_ha(77.0);
+        assert_eq!(val, 77.0);
+        assert_eq!(unit, "°F");
+
+        let (val, unit) = EngineeringUnits::Percent.convert_for_ha(50.0);
+        assert_eq!(val, 50.0);
+        assert_eq!(unit, "%");
+
+        let (val, unit) = EngineeringUnits::Kilowatt.convert_for_ha(12.5);
+        assert_eq!(val, 12.5);
+        assert_eq!(unit, "kW");
+
+        let (val, unit) = EngineeringUnits::Psi.convert_for_ha(30.0);
+        assert_eq!(val, 30.0);
+        assert_eq!(unit, "psi");
+
+        let (val, unit) = EngineeringUnits::Foot.convert_for_ha(10.0);
+        assert_eq!(val, 10.0);
+        assert_eq!(unit, "ft");
+
+        let (val, unit) = EngineeringUnits::Pound.convert_for_ha(150.0);
+        assert_eq!(val, 150.0);
+        assert_eq!(unit, "lb");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_mmh2o_to_pa() {
+        let (val, unit) = EngineeringUnits::MillimetersWater.convert_for_ha(100.0);
+        assert!((val - 980.665).abs() < 0.01, "mmH₂O conversion failed");
+        assert_eq!(unit, "Pa");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_cmh2o_to_pa() {
+        let (val, unit) = EngineeringUnits::CentimetersWater.convert_for_ha(10.0);
+        assert!((val - 980.665).abs() < 0.01, "cmH₂O conversion failed");
+        assert_eq!(unit, "Pa");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_hp_to_w() {
+        let (val, unit) = EngineeringUnits::Horsepower.convert_for_ha(1.0);
+        assert!((val - 745.7).abs() < 0.1, "hp to W conversion failed");
+        assert_eq!(unit, "W");
+
+        let (val, unit) = EngineeringUnits::Horsepower.convert_for_ha(10.0);
+        assert!((val - 7457.0).abs() < 0.1, "hp to W conversion failed");
+        assert_eq!(unit, "W");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_gpm_to_lmin() {
+        let (val, unit) = EngineeringUnits::GallonPerMinute.convert_for_ha(10.0);
+        assert!((val - 37.85).abs() < 0.01, "GPM to L/min conversion failed");
+        assert_eq!(unit, "L/min");
+
+        let (val, unit) = EngineeringUnits::GallonPerMinute.convert_for_ha(1.0);
+        assert!((val - 3.785).abs() < 0.01, "GPM to L/min conversion failed");
+        assert_eq!(unit, "L/min");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_joule_to_wh() {
+        let (val, unit) = EngineeringUnits::Joule.convert_for_ha(3600.0);
+        assert!((val - 1.0).abs() < 0.01, "J to Wh conversion failed");
+        assert_eq!(unit, "Wh");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_kilojoule_to_wh() {
+        let (val, unit) = EngineeringUnits::Kilojoule.convert_for_ha(3.6);
+        assert!((val - 1.0).abs() < 0.01, "kJ to Wh conversion failed");
+        assert_eq!(unit, "Wh");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_btu_to_wh() {
+        let (val, unit) = EngineeringUnits::Btu.convert_for_ha(1.0);
+        assert!(
+            (val - 0.293071).abs() < 0.001,
+            "BTU to Wh conversion failed"
+        );
+        assert_eq!(unit, "Wh");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_cfm_to_lmin() {
+        let (val, unit) = EngineeringUnits::CubicFootPerMinute.convert_for_ha(100.0);
+        assert!(
+            (val - 47.1947).abs() < 0.01,
+            "CFM to L/min conversion failed"
+        );
+        assert_eq!(unit, "L/min");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_lps_to_lmin() {
+        let (val, unit) = EngineeringUnits::LiterPerSecond.convert_for_ha(1.0);
+        assert!((val - 60.0).abs() < 0.01, "L/s to L/min conversion failed");
+        assert_eq!(unit, "L/min");
+    }
+
+    #[test]
+    fn engineering_units_convert_for_ha_metric_ton_to_kg() {
+        let (val, unit) = EngineeringUnits::MetricTon.convert_for_ha(1.0);
+        assert!(
+            (val - 1000.0).abs() < 0.01,
+            "metric ton to kg conversion failed"
+        );
+        assert_eq!(unit, "kg");
+    }
+
+    #[test]
+    fn engineering_units_unknown_code_returns_none() {
+        assert_eq!(EngineeringUnits::from_code(9999), None);
+        assert_eq!(EngineeringUnits::from_code(200), None);
+        assert_eq!(EngineeringUnits::from_code(100), None);
+    }
+
+    #[test]
+    fn engineering_units_no_units_variant() {
+        assert_eq!(EngineeringUnits::NoUnits.ha_unit_str(), "");
+        let (val, unit) = EngineeringUnits::NoUnits.convert_for_ha(42.0);
+        assert_eq!(val, 42.0);
+        assert_eq!(unit, "");
+    }
+
+    #[test]
+    fn engineering_units_from_into_u32() {
+        let unit = EngineeringUnits::Watt;
+        let code: u32 = unit.into();
+        assert_eq!(code, 19);
+
+        let recovered = EngineeringUnits::from_code(code).unwrap();
+        assert_eq!(recovered, EngineeringUnits::Watt);
+    }
+
+    #[test]
+    fn engineering_units_comprehensive_coverage() {
+        // Test a diverse set of units to ensure comprehensive coverage
+        let test_cases = [
+            (0, EngineeringUnits::DegreesCelsius, "°C"),
+            (1, EngineeringUnits::DegreesFahrenheit, "°F"),
+            (3, EngineeringUnits::Pascal, "Pa"),
+            (6, EngineeringUnits::Psi, "psi"),
+            (7, EngineeringUnits::MillimetersWater, "Pa"),
+            (14, EngineeringUnits::KilowattHour, "kWh"),
+            (19, EngineeringUnits::Watt, "W"),
+            (20, EngineeringUnits::Kilowatt, "kW"),
+            (28, EngineeringUnits::GallonPerMinute, "L/min"),
+            (34, EngineeringUnits::Meter, "m"),
+            (36, EngineeringUnits::Foot, "ft"),
+            (42, EngineeringUnits::Kilogram, "kg"),
+            (44, EngineeringUnits::Pound, "lb"),
+            (51, EngineeringUnits::Liter, "L"),
+            (58, EngineeringUnits::Ampere, "A"),
+            (60, EngineeringUnits::Volt, "V"),
+            (65, EngineeringUnits::Hertz, "Hz"),
+            (75, EngineeringUnits::Hour, "h"),
+            (95, EngineeringUnits::Percent, "%"),
+        ];
+
+        for (code, expected_unit, expected_str) in test_cases {
+            let from_code = EngineeringUnits::from_code(code)
+                .unwrap_or_else(|| panic!("Failed to decode code {}", code));
+            assert_eq!(from_code, expected_unit);
+            assert_eq!(from_code.code(), code);
+            assert_eq!(from_code.ha_unit_str(), expected_str);
+        }
     }
 }

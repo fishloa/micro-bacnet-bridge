@@ -31,7 +31,9 @@ pub mod snmp;
 pub mod syslog;
 
 // Top-level re-exports of the most commonly used types.
-pub use bacnet::{ApduType, BacnetValue, ObjectId, ObjectType, PropertyId, ServiceChoice};
+pub use bacnet::{
+    ApduType, BacnetValue, EngineeringUnits, ObjectId, ObjectType, PropertyId, ServiceChoice,
+};
 pub use config::{BacnetDeviceConfig, BridgeConfig, NetworkConfig, UserConfig, UserRole};
 pub use error::{BridgeError, DecodeError, EncodeError};
 pub use ipc::{BacnetPdu, RingBuffer};
