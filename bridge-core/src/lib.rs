@@ -59,7 +59,10 @@ pub use ntp::{
     encode_request as ntp_encode_request, ntp_to_unix_epoch, NtpPacket, NtpTimestamp, NTP_PORT,
     NTP_UNIX_OFFSET, SNTP_PACKET_LEN,
 };
-pub use ota::{validate_firmware_image, MAX_FIRMWARE_SIZE};
+pub use ota::{
+    is_uf2, parse_uf2_block, validate_firmware_image, MAX_FIRMWARE_SIZE, UF2_BLOCK_SIZE,
+    UF2_FAMILY_RP2040, UF2_MAGIC1, UF2_MAGIC2, UF2_MAGIC3, UF2_PAYLOAD_SIZE,
+};
 pub use snmp::{
     decode_get_request, encode_get_response, SnmpRequest, SnmpValue, VarBind, ERROR_GEN_ERR,
     ERROR_NO_ERROR, ERROR_NO_SUCH_NAME, OID_BACNET_DEVICES_DISCOVERED, OID_IPC_DROP_COUNT,

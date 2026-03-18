@@ -80,6 +80,69 @@ pub fn validate_firmware_image(first_8_bytes: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// UF2 format support
+// ---------------------------------------------------------------------------
+
+/// UF2 block size (always 512 bytes).
+pub const UF2_BLOCK_SIZE: usize = 512;
+
+/// UF2 payload size per block (always 256 bytes).
+pub const UF2_PAYLOAD_SIZE: usize = 256;
+
+/// UF2 magic numbers.
+pub const UF2_MAGIC1: u32 = 0x0A324655; // "UF2\n"
+pub const UF2_MAGIC2: u32 = 0x9E5D5157;
+pub const UF2_MAGIC3: u32 = 0x0AB16F30;
+
+/// RP2040 family ID for UF2.
+pub const UF2_FAMILY_RP2040: u32 = 0xE48BFF56;
+
+/// Check if data starts with a valid UF2 magic header.
+pub fn is_uf2(data: &[u8]) -> bool {
+    if data.len() < 4 {
+        return false;
+    }
+    u32::from_le_bytes([data[0], data[1], data[2], data[3]]) == UF2_MAGIC1
+}
+
+/// Parse a single 512-byte UF2 block.
+/// Returns `Ok((target_address, payload_slice, block_num, total_blocks))` or error.
+pub fn parse_uf2_block(block: &[u8]) -> Result<(u32, &[u8], u32, u32), &'static str> {
+    if block.len() < UF2_BLOCK_SIZE {
+        return Err("block too short");
+    }
+
+    let magic1 = u32::from_le_bytes([block[0], block[1], block[2], block[3]]);
+    let magic2 = u32::from_le_bytes([block[4], block[5], block[6], block[7]]);
+    let _flags = u32::from_le_bytes([block[8], block[9], block[10], block[11]]);
+    let target_addr = u32::from_le_bytes([block[12], block[13], block[14], block[15]]);
+    let payload_size = u32::from_le_bytes([block[16], block[17], block[18], block[19]]) as usize;
+    let block_num = u32::from_le_bytes([block[20], block[21], block[22], block[23]]);
+    let total_blocks = u32::from_le_bytes([block[24], block[25], block[26], block[27]]);
+    let magic3 = u32::from_le_bytes([block[508], block[509], block[510], block[511]]);
+
+    if magic1 != UF2_MAGIC1 {
+        return Err("bad magic1");
+    }
+    if magic2 != UF2_MAGIC2 {
+        return Err("bad magic2");
+    }
+    if magic3 != UF2_MAGIC3 {
+        return Err("bad magic3");
+    }
+    if payload_size > UF2_PAYLOAD_SIZE {
+        return Err("payload too large");
+    }
+
+    Ok((
+        target_addr,
+        &block[32..32 + payload_size],
+        block_num,
+        total_blocks,
+    ))
+}
+
+// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
@@ -213,6 +276,73 @@ mod tests {
     #[test]
     fn test_max_firmware_size_constant() {
         assert_eq!(MAX_FIRMWARE_SIZE, 1_500_000);
+    }
+
+    // --- UF2 tests ---
+
+    fn make_uf2_block(target_addr: u32, block_num: u32, total: u32, payload: &[u8]) -> [u8; 512] {
+        let mut block = [0u8; 512];
+        block[0..4].copy_from_slice(&UF2_MAGIC1.to_le_bytes());
+        block[4..8].copy_from_slice(&UF2_MAGIC2.to_le_bytes());
+        block[8..12].copy_from_slice(&0u32.to_le_bytes()); // flags
+        block[12..16].copy_from_slice(&target_addr.to_le_bytes());
+        block[16..20].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+        block[20..24].copy_from_slice(&block_num.to_le_bytes());
+        block[24..28].copy_from_slice(&total.to_le_bytes());
+        block[28..32].copy_from_slice(&UF2_FAMILY_RP2040.to_le_bytes());
+        block[32..32 + payload.len()].copy_from_slice(payload);
+        block[508..512].copy_from_slice(&UF2_MAGIC3.to_le_bytes());
+        block
+    }
+
+    #[test]
+    fn test_is_uf2_valid() {
+        let block = make_uf2_block(0x10000100, 0, 1, &[0xAB; 256]);
+        assert!(is_uf2(&block));
+    }
+
+    #[test]
+    fn test_is_uf2_raw_binary() {
+        // Raw ARM binary starts with SP (RAM address), not UF2 magic
+        let hdr = make_header(0x2003_E000, 0x1000_0101);
+        assert!(!is_uf2(&hdr));
+    }
+
+    #[test]
+    fn test_is_uf2_too_short() {
+        assert!(!is_uf2(&[0x55, 0x46]));
+        assert!(!is_uf2(&[]));
+    }
+
+    #[test]
+    fn test_parse_uf2_block_valid() {
+        let payload = [0x42u8; 256];
+        let block = make_uf2_block(0x10000100, 0, 10, &payload);
+        let (addr, data, num, total) = parse_uf2_block(&block).unwrap();
+        assert_eq!(addr, 0x10000100);
+        assert_eq!(data.len(), 256);
+        assert_eq!(data[0], 0x42);
+        assert_eq!(num, 0);
+        assert_eq!(total, 10);
+    }
+
+    #[test]
+    fn test_parse_uf2_block_bad_magic() {
+        let mut block = make_uf2_block(0x10000100, 0, 1, &[0; 256]);
+        block[0] = 0xFF; // corrupt magic1
+        assert!(parse_uf2_block(&block).is_err());
+    }
+
+    #[test]
+    fn test_parse_uf2_block_too_short() {
+        assert!(parse_uf2_block(&[0u8; 100]).is_err());
+    }
+
+    #[test]
+    fn test_parse_uf2_small_payload() {
+        let block = make_uf2_block(0x10000100, 0, 1, &[0xAA; 128]);
+        let (_, data, _, _) = parse_uf2_block(&block).unwrap();
+        assert_eq!(data.len(), 128);
     }
 
     // --- Regression: clippy is_multiple_of / range contains refactor ---

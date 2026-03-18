@@ -1,6 +1,7 @@
 //! HTTP-based OTA firmware update handler.
 //!
-//! Accepts a raw ARM binary (not UF2) via `POST /api/v1/system/firmware`.
+//! Accepts either a raw ARM binary OR a UF2 file via `POST /api/v1/system/firmware`.
+//! The format is auto-detected from the first 4 bytes (UF2 magic vs ARM vector table).
 //! The binary is written directly over the running firmware in flash, then
 //! the device reboots via `SCB::sys_reset()`.
 //!
@@ -35,7 +36,9 @@
 //! same TODO block as `config::ConfigManager::save`.
 
 use crate::config::FLASH_SIZE;
-use bridge_core::ota::{validate_firmware_image, MAX_FIRMWARE_SIZE};
+use bridge_core::ota::{
+    is_uf2, parse_uf2_block, validate_firmware_image, MAX_FIRMWARE_SIZE, UF2_BLOCK_SIZE,
+};
 use defmt::{error, info, warn};
 use embassy_net::tcp::TcpSocket;
 use embassy_rp::flash::{Async, Flash};
@@ -173,15 +176,22 @@ pub async fn handle_firmware_upload(
             }
         }
 
-        // ---- 3. Validate first sector (ARM vector table) ----
+        // ---- 3. Detect format + validate on first sector ----
         if first_sector {
+            first_sector = false;
+            if is_uf2(&sector_buf) {
+                // UF2 detected — switch to UF2 processing mode.
+                info!("ota: UF2 format detected, switching to UF2 handler");
+                handle_uf2_upload(socket, content_length, &sector_buf[..sector_data_len]).await;
+                return;
+            }
+            // Raw binary — validate ARM vector table
             if !validate_firmware_image(&sector_buf[..8.min(sector_data_len)]) {
                 warn!("ota: invalid ARM vector table — rejecting image");
                 send_response(socket, 400, "Invalid firmware: bad ARM vector table").await;
                 return;
             }
-            first_sector = false;
-            info!("ota: vector table OK, beginning flash write");
+            info!("ota: raw binary, vector table OK, beginning flash write");
         }
 
         // ---- 4. Erase + write the sector ----
@@ -268,6 +278,194 @@ pub async fn handle_firmware_upload(
     // ---- 6. Reboot ----
     info!("ota: triggering system reset");
     cortex_m::peripheral::SCB::sys_reset();
+}
+
+// ---------------------------------------------------------------------------
+// UF2 upload handler
+// ---------------------------------------------------------------------------
+
+/// Handle a UF2 upload. Called when the first sector is detected as UF2.
+/// `first_block_data` contains the first chunk already read (up to 4096 bytes,
+/// may contain multiple UF2 blocks).
+async fn handle_uf2_upload(
+    socket: &mut TcpSocket<'_>,
+    content_length: usize,
+    first_block_data: &[u8],
+) {
+    let total_blocks = content_length / UF2_BLOCK_SIZE;
+    if total_blocks == 0 {
+        send_response(socket, 400, "UF2 file too small").await;
+        return;
+    }
+
+    // We process UF2 blocks one at a time (512 bytes each).
+    // Each block specifies its own target address, so we erase+write per sector as needed.
+    let mut block_buf = [0u8; UF2_BLOCK_SIZE];
+    let mut blocks_written = 0u32;
+    let mut bytes_consumed = 0usize;
+    let mut validated = false;
+
+    // Track which sectors we've already erased to avoid double-erase
+    let mut last_erased_sector: u32 = u32::MAX;
+
+    // Sector accumulation buffer — we accumulate 256-byte UF2 payloads into
+    // a full 4096-byte sector before writing
+    let mut sector_buf = [0xFFu8; SECTOR_SIZE]; // 0xFF = erased state
+    let mut current_sector_addr: u32 = u32::MAX;
+    let mut sector_fill = 0usize;
+
+    // Process data: first from first_block_data, then from socket
+    let mut source_cursor = 0usize;
+    let mut reading_socket = false;
+
+    loop {
+        // Fill block_buf with 512 bytes
+        let mut filled = 0usize;
+
+        // Drain from first_block_data first
+        if !reading_socket {
+            while filled < UF2_BLOCK_SIZE && source_cursor < first_block_data.len() {
+                block_buf[filled] = first_block_data[source_cursor];
+                filled += 1;
+                source_cursor += 1;
+            }
+            if source_cursor >= first_block_data.len() {
+                reading_socket = true;
+            }
+        }
+
+        // Then from socket
+        while filled < UF2_BLOCK_SIZE {
+            match socket.read(&mut block_buf[filled..UF2_BLOCK_SIZE]).await {
+                Ok(0) => {
+                    if filled == 0 && blocks_written > 0 {
+                        // Normal end of stream
+                        break;
+                    }
+                    warn!("ota: UF2 socket closed early");
+                    send_response(socket, 400, "Connection closed during UF2 upload").await;
+                    return;
+                }
+                Ok(n) => filled += n,
+                Err(_) => {
+                    send_response(socket, 500, "Socket read error").await;
+                    return;
+                }
+            }
+        }
+
+        if filled < UF2_BLOCK_SIZE {
+            break; // End of data
+        }
+
+        bytes_consumed += UF2_BLOCK_SIZE;
+
+        // Parse the UF2 block
+        let (target_addr, payload, _block_num, _total) = match parse_uf2_block(&block_buf) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("ota: bad UF2 block at byte {}: {}", bytes_consumed, e);
+                send_response(socket, 400, "Malformed UF2 block").await;
+                return;
+            }
+        };
+
+        // Validate first block's payload contains a valid vector table
+        if !validated {
+            // The first UF2 block targets the start of flash. Check vector table.
+            if target_addr == 0x10000000 || target_addr == 0x10000100 {
+                if payload.len() >= 8 && !validate_firmware_image(&payload[..8]) {
+                    send_response(socket, 400, "Invalid firmware: bad ARM vector table in UF2")
+                        .await;
+                    return;
+                }
+            }
+            validated = true;
+            info!("ota: UF2 validated, writing {} blocks", total_blocks);
+        }
+
+        // Convert XIP address to flash offset (strip 0x10000000 base)
+        let flash_offset = target_addr.wrapping_sub(0x10000000);
+
+        // Check bounds
+        if flash_offset + payload.len() as u32 > CONFIG_SECTOR_OFFSET {
+            send_response(socket, 400, "UF2 block targets config sector").await;
+            return;
+        }
+
+        // Which sector does this block belong to?
+        let sector_addr = flash_offset & !(SECTOR_SIZE as u32 - 1);
+
+        // If we've moved to a new sector, flush the old one
+        if sector_addr != current_sector_addr && current_sector_addr != u32::MAX {
+            if !flush_sector(current_sector_addr, &sector_buf).await {
+                send_response(socket, 500, "Flash write error").await;
+                return;
+            }
+            sector_buf = [0xFFu8; SECTOR_SIZE];
+            sector_fill = 0;
+        }
+
+        current_sector_addr = sector_addr;
+
+        // Copy payload into sector buffer at the correct offset
+        let offset_in_sector = (flash_offset - sector_addr) as usize;
+        let end = (offset_in_sector + payload.len()).min(SECTOR_SIZE);
+        sector_buf[offset_in_sector..end].copy_from_slice(&payload[..end - offset_in_sector]);
+        sector_fill = sector_fill.max(end);
+
+        blocks_written += 1;
+        let _ = last_erased_sector; // suppress unused warning
+        last_erased_sector = sector_addr;
+
+        if bytes_consumed >= content_length {
+            break;
+        }
+    }
+
+    // Flush the last sector
+    if current_sector_addr != u32::MAX && sector_fill > 0 {
+        if !flush_sector(current_sector_addr, &sector_buf).await {
+            send_response(socket, 500, "Flash write error on last sector").await;
+            return;
+        }
+    }
+
+    info!("ota: UF2 complete, {} blocks written", blocks_written);
+    send_response(
+        socket,
+        200,
+        "Firmware update complete. Device is rebooting...",
+    )
+    .await;
+    Timer::after_millis(500).await;
+    cortex_m::peripheral::SCB::sys_reset();
+}
+
+/// Erase a sector and write data to it.
+async fn flush_sector(sector_offset: u32, data: &[u8; SECTOR_SIZE]) -> bool {
+    let mut flash_guard = FLASH.lock().await;
+    match flash_guard.as_mut() {
+        None => {
+            error!("ota: flash not initialised");
+            false
+        }
+        Some(flash) => {
+            if flash
+                .blocking_erase(sector_offset, sector_offset + SECTOR_SIZE as u32)
+                .is_err()
+            {
+                error!("ota: erase failed at {:#x}", sector_offset);
+                return false;
+            }
+            if flash.blocking_write(sector_offset, data).is_err() {
+                error!("ota: write failed at {:#x}", sector_offset);
+                return false;
+            }
+            info!("ota: sector at {:#x} written", sector_offset);
+            true
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

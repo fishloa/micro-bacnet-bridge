@@ -33,33 +33,43 @@ const REQ_BUF: usize = 512;
 /// After init, always `Some`.
 pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<BridgeConfig>> = Mutex::new(None);
 
-/// Main HTTP server task. Accepts one connection at a time.
-#[embassy_executor::task]
-pub async fn http_task(stack: Stack<'static>) {
+/// HTTP connection handler for one socket slot.
+/// Loops: accept → handle → close → repeat.
+async fn http_worker(stack: Stack<'static>, id: u8) {
     let mut rx_buf = [0u8; RX_BUF];
     let mut tx_buf = [0u8; TX_BUF];
 
     loop {
         let mut socket = TcpSocket::new(stack, &mut rx_buf, &mut tx_buf);
-        // M7: Use a longer timeout so that SSE connections (which are long-lived
-        // by design) are not prematurely dropped.  The per-request path uses the
-        // same socket but will close the connection after one response anyway, so
-        // the longer timeout is harmless there.
         socket.set_timeout(Some(embassy_time::Duration::from_secs(120)));
 
-        info!("http: waiting for connection on port {}", HTTP_PORT);
         if socket.accept(HTTP_PORT).await.is_err() {
-            warn!("http: accept error");
             Timer::after_millis(100).await;
             continue;
         }
 
-        info!("http: connection accepted");
+        info!("http[{}]: connection accepted", id);
         handle_connection(&mut socket).await;
         socket.close();
-        // Small yield to allow the stack to process the close
         Timer::after_millis(10).await;
     }
+}
+
+/// Main HTTP server — runs 3 concurrent connection slots so the browser
+/// can load HTML + CSS + JS in parallel without blocking.
+#[embassy_executor::task]
+pub async fn http_task(stack: Stack<'static>) {
+    stack.wait_config_up().await;
+    info!("http: network up, starting server (3 slots)");
+
+    // Run 3 workers concurrently — embassy cooperative async means they
+    // share Core 0's executor and yield at every .await point.
+    embassy_futures::join::join3(
+        http_worker(stack, 0),
+        http_worker(stack, 1),
+        http_worker(stack, 2),
+    )
+    .await;
 }
 
 /// Handle a single HTTP connection (one request/response cycle).
@@ -112,6 +122,19 @@ async fn handle_connection(socket: &mut TcpSocket<'_>) {
         ("GET", "/api/v1/config/bacnet") => api_get_bacnet_config(socket).await,
         ("GET", "/api/v1/system/status") => api_get_status(socket).await,
 
+        // Stub endpoints — return empty/default JSON until fully implemented
+        ("GET", "/api/v1/config/ntp") => send_json(socket, b"{\"enabled\":true,\"use_dhcp_servers\":true,\"servers\":[\"pool.ntp.org\"],\"sync_interval_secs\":3600}").await,
+        ("GET", "/api/v1/config/syslog") => send_json(socket, b"{\"enabled\":false,\"server\":\"\",\"port\":514}").await,
+        ("GET", "/api/v1/config/mqtt") => send_json(socket, b"{\"enabled\":false,\"broker\":\"\",\"port\":1883,\"client_id\":\"bacnet-bridge\",\"username\":\"\",\"password\":\"\",\"topic_prefix\":\"bacnet\",\"ha_discovery_enabled\":false,\"ha_discovery_prefix\":\"homeassistant\",\"publish_points\":[]}").await,
+        ("GET", "/api/v1/config/snmp") => send_json(socket, b"{\"enabled\":false,\"community\":\"public\"}").await,
+        ("GET", "/api/v1/config/points") => send_json(socket, b"[]").await,
+        ("GET", p) if p.starts_with("/api/v1/devices/") && p.contains("/points") => send_json(socket, b"[]").await,
+
+        // PUT stubs — accept but don't persist yet
+        ("PUT", p) if p.starts_with("/api/v1/config/") => {
+            send_json(socket, b"{\"ok\":true}").await;
+        }
+
         ("PUT", "/api/v1/config/network") => {
             let body = read_body(request);
             api_put_network_config(socket, body).await;
@@ -123,15 +146,21 @@ async fn handle_connection(socket: &mut TcpSocket<'_>) {
 
         // ---- OTA firmware update ----
         ("POST", "/api/v1/system/firmware") => {
-            // Extract Content-Length from the raw header block.
             let content_length = ota::parse_content_length(request).unwrap_or(0);
-            // The body bytes that were already read into req_buf (after \r\n\r\n).
             let body_start = read_body(request).as_bytes();
             ota::handle_firmware_upload(socket, content_length, body_start).await;
+        }
+        ("POST", "/api/v1/system/reboot") => {
+            send_json(socket, b"{\"ok\":true}").await;
+            Timer::after_millis(500).await;
+            cortex_m::peripheral::SCB::sys_reset();
         }
 
         // ---- OpenAPI spec ----
         ("GET", "/api/openapi.json") => send_json(socket, OPENAPI_STUB.as_bytes()).await,
+
+        // ---- SPA fallback: serve index.html for any non-API GET ----
+        ("GET", _) => serve_asset(socket, "/index.html").await,
 
         // ---- Fallthrough ----
         _ => send_404(socket).await,

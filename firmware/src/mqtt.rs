@@ -80,13 +80,8 @@ const CONNACK_TIMEOUT: Duration = Duration::from_secs(5);
 /// publish loop. Returns immediately if MQTT should be disabled.
 #[embassy_executor::task]
 pub async fn mqtt_task(stack: Stack<'static>) {
-    // Wait until the network stack has an IP address.
-    loop {
-        if stack.config_v4().is_some() {
-            break;
-        }
-        Timer::after_millis(500).await;
-    }
+    stack.wait_config_up().await;
+    info!("mqtt: network up");
 
     info!("mqtt: network ready, starting MQTT client");
 

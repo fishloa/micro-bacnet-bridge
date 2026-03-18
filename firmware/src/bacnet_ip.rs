@@ -39,6 +39,9 @@ const META_COUNT: usize = 4;
 /// BACnet/IP task: receive and transmit BACnet/IP packets.
 #[embassy_executor::task]
 pub async fn bacnet_ip_task(stack: Stack<'static>) {
+    stack.wait_config_up().await;
+    info!("bacnet_ip: network up");
+
     let mut rx_meta = [PacketMetadata::EMPTY; META_COUNT];
     let mut tx_meta = [PacketMetadata::EMPTY; META_COUNT];
     let mut rx_buf = [0u8; RX_BUF];

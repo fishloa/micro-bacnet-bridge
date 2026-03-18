@@ -157,7 +157,7 @@
 		<div class="vui-card vui-animate-fade-in" style="margin-top: var(--vui-space-lg);">
 			<div class="vui-section-header">Firmware Update</div>
 			<p class="text-sub" style="margin-bottom: var(--vui-space-md);">
-				Upload a raw ARM binary (<code>.bin</code>) to update the firmware.
+				Upload a <code>.bin</code> or <code>.uf2</code> firmware file. Format is auto-detected.
 				The device will reboot automatically after the upload completes.
 			</p>
 
@@ -173,10 +173,10 @@
 
 			<div class="ota-row">
 				<label class="vui-btn vui-btn-secondary ota-file-label">
-					{otaFile ? otaFile.name : 'Choose firmware .bin…'}
+					{otaFile ? otaFile.name : 'Choose firmware (.bin or .uf2)'}
 					<input
 						type="file"
-						accept=".bin"
+						accept=".bin,.uf2"
 						class="ota-file-input"
 						onchange={onFileChange}
 						disabled={otaStatus === 'uploading'}

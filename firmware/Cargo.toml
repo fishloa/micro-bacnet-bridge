@@ -17,6 +17,7 @@ embassy-executor = { version = "0.9.1", features = ["arch-cortex-m", "executor-t
 embassy-rp = { version = "0.9.0", features = ["time-driver", "critical-section-impl"] }
 embassy-time = "0.5.0"
 embassy-sync = "0.7.2"
+embassy-futures = "0.1.2"
 
 # Networking
 embassy-net = { version = "0.8.0", features = ["tcp", "udp", "dhcpv4", "medium-ethernet", "multicast", "dns"] }

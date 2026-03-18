@@ -92,13 +92,8 @@ const TX_BUF: usize = 64;
 /// The task runs forever and does not return.
 #[embassy_executor::task]
 pub async fn ntp_task(stack: Stack<'static>) {
-    // Wait until the network stack has an IP address before we try NTP.
-    loop {
-        if stack.config_v4().is_some() {
-            break;
-        }
-        Timer::after_millis(500).await;
-    }
+    stack.wait_config_up().await;
+    info!("ntp: network up");
 
     info!("ntp: network ready, starting NTP sync");
 
