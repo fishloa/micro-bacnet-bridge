@@ -263,6 +263,9 @@ pub struct BridgeConfig {
     pub mqtt: MqttConfig,
     /// SNMP agent settings.
     pub snmp: SnmpConfig,
+    /// Ethernet MAC address (locally administered). [0;6] = not yet generated.
+    /// Generated from hardware entropy on first boot and persisted.
+    pub mac_addr: [u8; 6],
 }
 
 impl Default for BridgeConfig {
@@ -280,6 +283,7 @@ impl Default for BridgeConfig {
             syslog: SyslogConfig::default(),
             mqtt: MqttConfig::default(),
             snmp: SnmpConfig::default(),
+            mac_addr: [0u8; 6],
         }
     }
 }

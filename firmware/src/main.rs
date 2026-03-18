@@ -56,16 +56,68 @@ async fn main(spawner: Spawner) {
     // ---- GPIO: LED heartbeat ----
     let mut led = Output::new(p.PIN_25, Level::Low);
 
-    // ---- SPI1 for W5500 ----
-    // GPIO16=MISO, GPIO17=CS, GPIO18=SCK, GPIO19=MOSI, GPIO20=RST, GPIO21=INT
+    // ---- Flash + config (before W5500, we need the MAC address) ----
+    let flash =
+        embassy_rp::flash::Flash::<_, embassy_rp::flash::Async, { config::FLASH_SIZE }>::new(
+            p.FLASH, p.DMA_CH2,
+        );
+    let mut cfg_mgr = config::ConfigManager::new(flash);
+    let mut bridge_config = cfg_mgr.load();
+
+    // MAC address: persisted in config. Generated from ROSC entropy on first boot.
+    let mac_addr = if bridge_config.mac_addr == [0u8; 6] {
+        let seed = rosc_random_seed();
+        let mac = [
+            0x02, // locally administered, unicast
+            (seed >> 8) as u8,
+            (seed >> 16) as u8,
+            (seed >> 24) as u8,
+            (seed >> 32) as u8,
+            (seed >> 40) as u8,
+        ];
+        bridge_config.mac_addr = mac;
+        // Persist so MAC is stable across reboots
+        cfg_mgr.save(&bridge_config);
+        info!(
+            "first boot: generated MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
+        mac
+    } else {
+        bridge_config.mac_addr
+    };
+
+    // If hostname is factory default, make it unique with last 3 MAC bytes
+    if bridge_config.hostname.as_str() == "bacnet-bridge" {
+        let mut unique: heapless::String<32> = heapless::String::new();
+        let _ = core::fmt::write(
+            &mut unique,
+            format_args!(
+                "bacnet-bridge-{:02x}{:02x}{:02x}",
+                mac_addr[3], mac_addr[4], mac_addr[5]
+            ),
+        );
+        bridge_config.hostname = unique;
+    }
+
+    info!(
+        "config: device_id={}, hostname={}",
+        bridge_config.bacnet.device_id,
+        bridge_config.hostname.as_str()
+    );
+
+    // Hand flash to OTA subsystem
+    {
+        let mut flash_guard = ota::FLASH.lock().await;
+        *flash_guard = Some(cfg_mgr.into_flash());
+    }
+
+    // ---- SPI0 for W5500 ----
     let mut spi_cfg = SpiConfig::default();
-    spi_cfg.frequency = 40_000_000; // 40 MHz — W5500 supports up to 80 MHz
+    spi_cfg.frequency = 40_000_000;
 
     let spi_bus = Spi::new(
-        p.SPI0, p.PIN_18, // SCK
-        p.PIN_19, // MOSI
-        p.PIN_16, // MISO
-        p.DMA_CH0, p.DMA_CH1, spi_cfg,
+        p.SPI0, p.PIN_18, p.PIN_19, p.PIN_16, p.DMA_CH0, p.DMA_CH1, spi_cfg,
     );
 
     let cs = Output::new(p.PIN_17, Level::High);
@@ -73,23 +125,6 @@ async fn main(spawner: Spawner) {
 
     let w5500_int = embassy_rp::gpio::Input::new(p.PIN_21, embassy_rp::gpio::Pull::Up);
     let w5500_rst = Output::new(p.PIN_20, Level::High);
-
-    // MAC address: locally administered unicast, derived from ROSC entropy at
-    // boot.  This is not stable across reboots; production firmware should
-    // generate the MAC on first boot, persist it to flash in the config struct,
-    // and load it here instead.
-    //
-    // TODO: Load MAC from flash config (config::BridgeConfig::mac_addr field,
-    //       generated on first boot if all-zero) so the address is stable.
-    let mac_seed = rosc_random_seed();
-    let mac_addr = [
-        0x02, // locally administered, unicast
-        (mac_seed >> 8) as u8,
-        (mac_seed >> 16) as u8,
-        (mac_seed >> 24) as u8,
-        (mac_seed >> 32) as u8,
-        (mac_seed >> 40) as u8,
-    ];
 
     let wiznet_state = WIZNET_STATE.init(embassy_net_wiznet::State::new());
 
@@ -103,29 +138,7 @@ async fn main(spawner: Spawner) {
     .await
     .expect("W5500 init failed");
 
-    // Spawn the W5500 driver runner task
     spawner.spawn(w5500_task(w5500_runner)).unwrap();
-
-    // ---- Flash + config ----
-    let flash =
-        embassy_rp::flash::Flash::<_, embassy_rp::flash::Async, { config::FLASH_SIZE }>::new(
-            p.FLASH, p.DMA_CH2,
-        );
-    let mut cfg_mgr = config::ConfigManager::new(flash);
-    let bridge_config = cfg_mgr.load();
-    info!(
-        "config: device_id={}, hostname={}",
-        bridge_config.bacnet.device_id,
-        bridge_config.hostname.as_str()
-    );
-
-    // Hand the flash peripheral to the OTA subsystem now that the initial
-    // config load is complete.  Both config saves (future) and OTA writes
-    // will acquire ota::FLASH when they need flash access.
-    {
-        let mut flash_guard = ota::FLASH.lock().await;
-        *flash_guard = Some(cfg_mgr.into_flash());
-    }
 
     // Store loaded config in global for HTTP/mDNS tasks
     {
