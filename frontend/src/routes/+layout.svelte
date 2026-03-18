@@ -8,6 +8,7 @@
 		{ href: '/', icon: '⊞', label: 'Dashboard' },
 		{ href: '/config', icon: '⚙', label: 'Config' },
 		{ href: '/points', icon: '⊡', label: 'Points' },
+		{ href: '/convertors', icon: '⊛', label: 'Convertors' },
 		{ href: '/users', icon: '⊕', label: 'Users' },
 		{ href: '/tokens', icon: '⊗', label: 'Tokens' },
 		{ href: '/tls', icon: '⊘', label: 'TLS' },

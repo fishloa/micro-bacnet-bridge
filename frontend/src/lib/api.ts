@@ -132,21 +132,24 @@ export interface SnmpConfig {
 	community: string;
 }
 
+export interface Convertor {
+	id: string;
+	name: string;
+	processors: ProcessorDef[];
+}
+
+export type ProcessorDef =
+	| { type: 'set_unit'; unit: number }
+	| { type: 'scale'; factor: number; offset: number }
+	| { type: 'map_states'; labels: string[] };
+
 export interface PointConfig {
 	objectType: string;
 	objectInstance: number;
-	// Display/conversion
-	scale: number;         // multiplier (default 1.0)
-	offset: number;        // added after scale (default 0.0)
-	engineeringUnit: number; // BACnet unit code (0-65535), 95 = no-units
-	// Bridge routing
-	bridgeToBacnetIp: boolean; // forward to BACnet/IP (default true)
-	bridgeToMqtt: boolean;     // publish to MQTT (default true)
-	// Visibility / exposure
-	showOnDashboard: boolean;  // show this point on the dashboard (default true)
-	exposeInApi: boolean;      // expose via REST API (default true)
-	// State text labels for multi-state objects (1-based, index 0 = state 1)
-	stateText: string[];
+	/** 'ignore' suppresses the point; 'passthrough' forwards raw value; 'convert' applies convertor */
+	mode: 'ignore' | 'passthrough' | 'convert';
+	/** ID of the convertor to apply (only used when mode='convert') */
+	convertorId: string;
 }
 
 export const ENGINEERING_UNITS: { code: number; label: string }[] = [
@@ -356,25 +359,48 @@ const MOCK_SNMP_CONFIG: SnmpConfig = {
 	community: 'public',
 };
 
+export const MOCK_CONVERTORS: Convertor[] = [
+	{ id: 'temp-c', name: 'Temperature (°C)', processors: [{ type: 'set_unit', unit: 62 }] },
+	{
+		id: 'temp-f-to-c',
+		name: 'Temperature °F → °C',
+		processors: [
+			{ type: 'scale', factor: 0.5556, offset: -17.78 },
+			{ type: 'set_unit', unit: 62 },
+		],
+	},
+	{ id: 'pct', name: 'Percentage (%)', processors: [{ type: 'set_unit', unit: 98 }] },
+	{
+		id: 'pressure-inh2o',
+		name: 'Pressure (inH₂O)',
+		processors: [{ type: 'set_unit', unit: 57 }],
+	},
+	{
+		id: 'ahu-mode',
+		name: 'AHU Mode',
+		processors: [{ type: 'map_states', labels: ['Off', 'Heat', 'Cool', 'Auto'] }],
+	},
+];
+
 // Generate default PointConfig for every point in MOCK_POINTS[100]
 const MOCK_POINT_CONFIGS: PointConfig[] = MOCK_POINTS[100].map(p => {
-	const stateText: string[] =
+	// Assign a convertor where sensible for demo purposes
+	const convertorId =
 		p.objectType === 'multi-state-input' && p.objectInstance === 0
-			? ['Off', 'Heat', 'Cool', 'Auto']
-			: p.objectType === 'multi-state-value' && p.objectInstance === 0
-			? ['Manual', 'Auto', 'Override']
-			: [];
+			? 'ahu-mode'
+			: p.units === '°C'
+			? 'temp-c'
+			: p.units === '%'
+			? 'pct'
+			: p.units === 'inH₂O'
+			? 'pressure-inh2o'
+			: '';
+	const mode: PointConfig['mode'] = convertorId ? 'convert' : 'passthrough';
 	return {
 		objectType: p.objectType,
 		objectInstance: p.objectInstance,
-		scale: 1.0,
-		offset: 0.0,
-		engineeringUnit: 95,
-		bridgeToBacnetIp: true,
-		bridgeToMqtt: true,
-		showOnDashboard: true,
-		exposeInApi: true,
-		stateText,
+		mode,
+		convertorId,
 	};
 });
 
@@ -481,11 +507,11 @@ export const api = {
 	setMqttConfig: (cfg: MqttConfig) => put('/config/mqtt', cfg, cfg),
 	getSnmpConfig: () => get('/config/snmp', MOCK_SNMP_CONFIG),
 	setSnmpConfig: (cfg: SnmpConfig) => put('/config/snmp', cfg, cfg),
+	getConvertors: () => get('/config/convertors', MOCK_CONVERTORS),
+	setConvertors: (list: Convertor[]) => put('/config/convertors', list, list),
 	getPointConfigs: () => get('/config/points', MOCK_POINT_CONFIGS),
 	setPointConfig: (objectType: string, objectInstance: number, cfg: PointConfig) =>
 		put(`/config/points/${objectType}:${objectInstance}`, cfg, cfg),
-	setPointConfigs: (configs: PointConfig[]) =>
-		put('/config/points', configs, configs),
 
 	// ---- Auth ----
 	login: (username: string, password: string): Promise<AuthResult> =>

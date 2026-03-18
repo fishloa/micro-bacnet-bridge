@@ -1,10 +1,11 @@
-//! Processor pipeline for BACnet point value transformation and exposure routing.
+//! Processor pipeline for BACnet point value transformation.
 //!
 //! # Overview
 //!
 //! Each discovered BACnet point may carry a [`PointRule`] that controls how its
-//! value is transformed before being forwarded to external systems (dashboard,
-//! BACnet/IP, MQTT, REST API).
+//! value is transformed before being forwarded (dashboard, BACnet/IP, MQTT, REST API).
+//! The processors come from the [`crate::config::Convertor`] referenced by the rule's
+//! `convertor_id` field.
 //!
 //! The pipeline is ordered: processors are applied left-to-right for the forward
 //! direction (BACnet → display) and right-to-left for the reverse direction
@@ -20,14 +21,12 @@
 //!
 //! # Modes
 //!
-//! - [`PointMode::Ignore`] — suppress the point entirely; `process_value` returns `Null`
-//!   and `should_expose` always returns `false`.
-//! - [`PointMode::Passthrough`] — forward the raw value unchanged, but still respect the
-//!   `ExposureConfig` flags.
-//! - [`PointMode::Processed`] — apply the full processor chain.
+//! - [`PointMode::Ignore`] — suppress the point entirely; `process_value` returns `Null`.
+//! - [`PointMode::Passthrough`] — forward the raw value unchanged.
+//! - [`PointMode::Processed`] — apply the full processor chain supplied by the convertor.
 
 use crate::bacnet::BacnetValue;
-use crate::config::{ExposureConfig, PointMode, PointRule, Processor};
+use crate::config::{PointMode, Processor};
 use heapless::String;
 
 // Re-export for use in tests
@@ -35,20 +34,16 @@ use heapless::String;
 use heapless::Vec as HVec;
 
 // ---------------------------------------------------------------------------
-// ExposureChannel
+// is_active
 // ---------------------------------------------------------------------------
 
-/// Which external channel a forwarded value is destined for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ExposureChannel {
-    /// Admin UI live dashboard.
-    Dashboard,
-    /// BACnet/IP unicast or multicast forwarding.
-    BacnetIp,
-    /// MQTT publish.
-    Mqtt,
-    /// HTTP REST API response.
-    Api,
+/// Return `true` if the point is active (i.e. not ignored).
+///
+/// A point is active when its mode is [`PointMode::Passthrough`] or
+/// [`PointMode::Processed`]. Ignored points should be suppressed from all
+/// output channels.
+pub fn is_active(mode: &PointMode) -> bool {
+    !matches!(mode, PointMode::Ignore)
 }
 
 // ---------------------------------------------------------------------------
@@ -61,14 +56,16 @@ pub enum ExposureChannel {
 ///   the processors.
 /// - If `mode` is [`PointMode::Passthrough`], returns `value` unchanged.
 /// - If `mode` is [`PointMode::Processed`], applies each [`Processor`] in order.
+///   The `processors` slice comes from the [`crate::config::Convertor`] referenced
+///   by the point's rule.
 ///
 /// Only the last `MapStates` processor in the chain affects state-text resolution.
 /// A `Scale` processor after a `MapStates` would receive the `CharString` output of
 /// `MapStates` and pass it through unchanged (scale only applies to numeric types).
 pub fn process_value(
     value: &BacnetValue,
-    processors: &[Processor],
     mode: &PointMode,
+    processors: &[Processor],
 ) -> BacnetValue {
     match mode {
         PointMode::Ignore => BacnetValue::Null,
@@ -224,55 +221,18 @@ fn parse_boolean(s: &str) -> Option<bool> {
 }
 
 // ---------------------------------------------------------------------------
-// should_expose
-// ---------------------------------------------------------------------------
-
-/// Return `true` if the point should be forwarded to the given `channel`.
-///
-/// - [`PointMode::Ignore`] always returns `false` regardless of `ExposureConfig`.
-/// - [`PointMode::Passthrough`] and [`PointMode::Processed`] respect the
-///   per-channel flags in `ExposureConfig`.
-pub fn should_expose(rule: &PointRule, channel: ExposureChannel) -> bool {
-    if rule.mode == PointMode::Ignore {
-        return false;
-    }
-    exposure_flag(&rule.exposure, channel)
-}
-
-/// Read the per-channel boolean flag from an [`ExposureConfig`].
-fn exposure_flag(exp: &ExposureConfig, channel: ExposureChannel) -> bool {
-    match channel {
-        ExposureChannel::Dashboard => exp.dashboard,
-        ExposureChannel::BacnetIp => exp.bacnet_ip,
-        ExposureChannel::Mqtt => exp.mqtt,
-        ExposureChannel::Api => exp.api,
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ExposureConfig, PointMode, PointRule, Processor};
+    use crate::config::{PointMode, Processor};
     use heapless::{String, Vec};
 
     // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
-
-    fn make_rule(mode: PointMode, processors: Vec<Processor, 4>) -> PointRule {
-        PointRule {
-            device_id: 1,
-            object_type: 0,
-            object_instance: 1,
-            mode,
-            processors,
-            exposure: ExposureConfig::default(),
-        }
-    }
 
     fn labels(strs: &[&str]) -> HVec<String<12>, 8> {
         let mut v: HVec<String<12>, 8> = HVec::new();
@@ -297,22 +257,38 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // is_active
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn is_active_ignore_false() {
+        assert!(!is_active(&PointMode::Ignore));
+    }
+
+    #[test]
+    fn is_active_passthrough_true() {
+        assert!(is_active(&PointMode::Passthrough));
+    }
+
+    #[test]
+    fn is_active_processed_true() {
+        assert!(is_active(&PointMode::Processed));
+    }
+
+    // -----------------------------------------------------------------------
     // process_value — Ignore mode
     // -----------------------------------------------------------------------
 
     #[test]
     fn process_value_ignore_returns_null() {
-        let rule = make_rule(PointMode::Ignore, Vec::new());
-        let result = process_value(&BacnetValue::Real(42.0), &rule.processors, &rule.mode);
+        let result = process_value(&BacnetValue::Real(42.0), &PointMode::Ignore, &[]);
         assert_eq!(result, BacnetValue::Null);
     }
 
     #[test]
     fn process_value_ignore_with_processors_still_null() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(2.0, 0.0));
-        let rule = make_rule(PointMode::Ignore, procs);
-        let result = process_value(&BacnetValue::Real(10.0), &rule.processors, &rule.mode);
+        let procs = [scale_proc(2.0, 0.0)];
+        let result = process_value(&BacnetValue::Real(10.0), &PointMode::Ignore, &procs);
         assert_eq!(result, BacnetValue::Null);
     }
 
@@ -322,27 +298,23 @@ mod tests {
 
     #[test]
     fn process_value_passthrough_real() {
-        let rule = make_rule(PointMode::Passthrough, Vec::new());
         let input = BacnetValue::Real(99.5);
-        let result = process_value(&input, &rule.processors, &rule.mode);
+        let result = process_value(&input, &PointMode::Passthrough, &[]);
         assert_eq!(result, BacnetValue::Real(99.5));
     }
 
     #[test]
     fn process_value_passthrough_ignores_processors() {
         // Even if processors are present, Passthrough skips them.
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(100.0, 0.0));
-        let rule = make_rule(PointMode::Passthrough, procs);
-        let result = process_value(&BacnetValue::Real(1.0), &rule.processors, &rule.mode);
+        let procs = [scale_proc(100.0, 0.0)];
+        let result = process_value(&BacnetValue::Real(1.0), &PointMode::Passthrough, &procs);
         assert_eq!(result, BacnetValue::Real(1.0));
     }
 
     #[test]
     fn process_value_passthrough_boolean() {
-        let rule = make_rule(PointMode::Passthrough, Vec::new());
         assert_eq!(
-            process_value(&BacnetValue::Boolean(true), &rule.processors, &rule.mode),
+            process_value(&BacnetValue::Boolean(true), &PointMode::Passthrough, &[]),
             BacnetValue::Boolean(true)
         );
     }
@@ -353,10 +325,8 @@ mod tests {
 
     #[test]
     fn process_value_set_unit_no_value_change() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(set_unit_proc(0)); // DegreesCelsius
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Real(25.0), &rule.processors, &rule.mode);
+        let procs = [set_unit_proc(0)]; // DegreesCelsius
+        let result = process_value(&BacnetValue::Real(25.0), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(25.0));
     }
 
@@ -366,73 +336,59 @@ mod tests {
 
     #[test]
     fn process_value_scale_real() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(2.0, 10.0));
-        let rule = make_rule(PointMode::Processed, procs);
+        let procs = [scale_proc(2.0, 10.0)];
         // 5 * 2 + 10 = 20
-        let result = process_value(&BacnetValue::Real(5.0), &rule.processors, &rule.mode);
+        let result = process_value(&BacnetValue::Real(5.0), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(20.0));
     }
 
     #[test]
     fn process_value_scale_signed_int() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(0.1, -40.0));
-        let rule = make_rule(PointMode::Processed, procs);
+        let procs = [scale_proc(0.1, -40.0)];
         // SignedInt(500) * 0.1 + (-40) = 50 - 40 = 10.0
-        let result = process_value(&BacnetValue::SignedInt(500), &rule.processors, &rule.mode);
+        let result = process_value(&BacnetValue::SignedInt(500), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(10.0));
     }
 
     #[test]
     fn process_value_scale_unsigned_int() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(1.0, 0.0));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::UnsignedInt(42), &rule.processors, &rule.mode);
+        let procs = [scale_proc(1.0, 0.0)];
+        let result = process_value(&BacnetValue::UnsignedInt(42), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(42.0));
     }
 
     #[test]
     fn process_value_scale_enumerated() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(1.0, 0.0));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Enumerated(3), &rule.processors, &rule.mode);
+        let procs = [scale_proc(1.0, 0.0)];
+        let result = process_value(&BacnetValue::Enumerated(3), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(3.0));
     }
 
     #[test]
     fn process_value_scale_boolean_passthrough() {
         // Scale does not affect Boolean.
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(100.0, 50.0));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Boolean(true), &rule.processors, &rule.mode);
+        let procs = [scale_proc(100.0, 50.0)];
+        let result = process_value(&BacnetValue::Boolean(true), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Boolean(true));
     }
 
     #[test]
     fn process_value_scale_charstring_passthrough() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(2.0, 1.0));
-        let rule = make_rule(PointMode::Processed, procs);
+        let procs = [scale_proc(2.0, 1.0)];
         let mut s = String::<64>::new();
         let _ = s.push_str("hello");
         let result = process_value(
             &BacnetValue::CharString(s.clone()),
-            &rule.processors,
-            &rule.mode,
+            &PointMode::Processed,
+            &procs,
         );
         assert_eq!(result, BacnetValue::CharString(s));
     }
 
     #[test]
     fn process_value_scale_identity() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(1.0, 0.0));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Real(7.7), &rule.processors, &rule.mode);
+        let procs = [scale_proc(1.0, 0.0)];
+        let result = process_value(&BacnetValue::Real(7.7), &PointMode::Processed, &procs);
         assert!((result.as_real().unwrap() - 7.7).abs() < 1e-5);
     }
 
@@ -442,11 +398,9 @@ mod tests {
 
     #[test]
     fn process_value_map_states_enumerated() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(map_states_proc(&["Off", "Heat", "Cool", "Auto"]));
-        let rule = make_rule(PointMode::Processed, procs);
+        let procs = [map_states_proc(&["Off", "Heat", "Cool", "Auto"])];
         // Enumerated(2) → "Heat" (1-based)
-        let result = process_value(&BacnetValue::Enumerated(2), &rule.processors, &rule.mode);
+        let result = process_value(&BacnetValue::Enumerated(2), &PointMode::Processed, &procs);
         let mut expected = String::<64>::new();
         let _ = expected.push_str("Heat");
         assert_eq!(result, BacnetValue::CharString(expected));
@@ -454,11 +408,9 @@ mod tests {
 
     #[test]
     fn process_value_map_states_unsigned_int() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(map_states_proc(&["Manual", "Auto", "Override"]));
-        let rule = make_rule(PointMode::Processed, procs);
+        let procs = [map_states_proc(&["Manual", "Auto", "Override"])];
         // UnsignedInt(1) → "Manual"
-        let result = process_value(&BacnetValue::UnsignedInt(1), &rule.processors, &rule.mode);
+        let result = process_value(&BacnetValue::UnsignedInt(1), &PointMode::Processed, &procs);
         let mut expected = String::<64>::new();
         let _ = expected.push_str("Manual");
         assert_eq!(result, BacnetValue::CharString(expected));
@@ -467,29 +419,23 @@ mod tests {
     #[test]
     fn process_value_map_states_zero_passthrough() {
         // State 0 is below the 1-based range → value unchanged.
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(map_states_proc(&["Off", "On"]));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::UnsignedInt(0), &rule.processors, &rule.mode);
+        let procs = [map_states_proc(&["Off", "On"])];
+        let result = process_value(&BacnetValue::UnsignedInt(0), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::UnsignedInt(0));
     }
 
     #[test]
     fn process_value_map_states_out_of_range() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(map_states_proc(&["Off", "On"]));
-        let rule = make_rule(PointMode::Processed, procs);
+        let procs = [map_states_proc(&["Off", "On"])];
         // State 5, only 2 labels → unchanged
-        let result = process_value(&BacnetValue::Enumerated(5), &rule.processors, &rule.mode);
+        let result = process_value(&BacnetValue::Enumerated(5), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Enumerated(5));
     }
 
     #[test]
     fn process_value_map_states_boolean_passthrough() {
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(map_states_proc(&["A", "B"]));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Boolean(false), &rule.processors, &rule.mode);
+        let procs = [map_states_proc(&["A", "B"])];
+        let result = process_value(&BacnetValue::Boolean(false), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Boolean(false));
     }
 
@@ -500,32 +446,24 @@ mod tests {
     #[test]
     fn process_value_set_unit_then_scale() {
         // SetUnit should not affect value; Scale should.
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(set_unit_proc(0));
-        let _ = procs.push(scale_proc(10.0, 0.0));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Real(3.0), &rule.processors, &rule.mode);
+        let procs = [set_unit_proc(0), scale_proc(10.0, 0.0)];
+        let result = process_value(&BacnetValue::Real(3.0), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(30.0));
     }
 
     #[test]
     fn process_value_scale_then_scale() {
         // Two consecutive Scale steps: first ×2 then +100.
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(scale_proc(2.0, 0.0)); // 5 * 2 = 10
-        let _ = procs.push(scale_proc(1.0, 100.0)); // 10 * 1 + 100 = 110
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Real(5.0), &rule.processors, &rule.mode);
+        let procs = [scale_proc(2.0, 0.0), scale_proc(1.0, 100.0)];
+        let result = process_value(&BacnetValue::Real(5.0), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(110.0));
     }
 
     #[test]
     fn process_value_set_unit_only() {
         // SetUnit is a no-op for the value.
-        let mut procs: Vec<Processor, 4> = Vec::new();
-        let _ = procs.push(set_unit_proc(95));
-        let rule = make_rule(PointMode::Processed, procs);
-        let result = process_value(&BacnetValue::Real(-1.5), &rule.processors, &rule.mode);
+        let procs = [set_unit_proc(95)];
+        let result = process_value(&BacnetValue::Real(-1.5), &PointMode::Processed, &procs);
         assert_eq!(result, BacnetValue::Real(-1.5));
     }
 
@@ -668,8 +606,7 @@ mod tests {
         let procs: &[Processor] = &procs_vec;
 
         // Forward: raw 7.5, scale 0.5, offset -5 → display -1.25
-        let mode = PointMode::Processed;
-        let display = process_value(&BacnetValue::Real(7.5), procs, &mode);
+        let display = process_value(&BacnetValue::Real(7.5), &PointMode::Processed, procs);
         assert_eq!(display, BacnetValue::Real(-1.25));
 
         // Reverse: "-1.25" → raw (−1.25 + 5) / 0.5 = 3.75 / 0.5 = 7.5
@@ -688,12 +625,15 @@ mod tests {
             v
         };
         let procs: &[Processor] = &procs_vec;
-        let mode = PointMode::Processed;
 
         for (i, &label) in state_labels.iter().enumerate() {
             let state = (i + 1) as u32;
             // Forward
-            let display = process_value(&BacnetValue::Enumerated(state), procs, &mode);
+            let display = process_value(
+                &BacnetValue::Enumerated(state),
+                &PointMode::Processed,
+                procs,
+            );
             let mut expected_str = String::<64>::new();
             let _ = expected_str.push_str(label);
             assert_eq!(display, BacnetValue::CharString(expected_str));
@@ -714,10 +654,9 @@ mod tests {
             v
         };
         let procs: &[Processor] = &procs_vec;
-        let mode = PointMode::Processed;
 
         // Forward: UnsignedInt(900) × 0.1 + (−40) = 90 − 40 = 50.0
-        let display = process_value(&BacnetValue::UnsignedInt(900), procs, &mode);
+        let display = process_value(&BacnetValue::UnsignedInt(900), &PointMode::Processed, procs);
         assert_eq!(display, BacnetValue::Real(50.0));
 
         // Reverse: (50 − (−40)) / 0.1 = 90 / 0.1 = 900
@@ -725,110 +664,6 @@ mod tests {
             Some(BacnetValue::Real(v)) => assert!((v - 900.0).abs() < 0.1, "got {}", v),
             other => panic!("expected Real(900.0), got {:?}", other),
         }
-    }
-
-    // -----------------------------------------------------------------------
-    // should_expose
-    // -----------------------------------------------------------------------
-
-    #[test]
-    fn should_expose_ignore_always_false() {
-        let rule = PointRule {
-            device_id: 1,
-            object_type: 0,
-            object_instance: 1,
-            mode: PointMode::Ignore,
-            processors: Vec::new(),
-            exposure: ExposureConfig {
-                dashboard: true,
-                bacnet_ip: true,
-                mqtt: true,
-                api: true,
-            },
-        };
-        assert!(!should_expose(&rule, ExposureChannel::Dashboard));
-        assert!(!should_expose(&rule, ExposureChannel::BacnetIp));
-        assert!(!should_expose(&rule, ExposureChannel::Mqtt));
-        assert!(!should_expose(&rule, ExposureChannel::Api));
-    }
-
-    #[test]
-    fn should_expose_passthrough_respects_flags() {
-        let rule = PointRule {
-            device_id: 1,
-            object_type: 0,
-            object_instance: 1,
-            mode: PointMode::Passthrough,
-            processors: Vec::new(),
-            exposure: ExposureConfig {
-                dashboard: true,
-                bacnet_ip: false,
-                mqtt: true,
-                api: false,
-            },
-        };
-        assert!(should_expose(&rule, ExposureChannel::Dashboard));
-        assert!(!should_expose(&rule, ExposureChannel::BacnetIp));
-        assert!(should_expose(&rule, ExposureChannel::Mqtt));
-        assert!(!should_expose(&rule, ExposureChannel::Api));
-    }
-
-    #[test]
-    fn should_expose_processed_respects_flags() {
-        let rule = PointRule {
-            device_id: 1,
-            object_type: 0,
-            object_instance: 1,
-            mode: PointMode::Processed,
-            processors: Vec::new(),
-            exposure: ExposureConfig {
-                dashboard: false,
-                bacnet_ip: true,
-                mqtt: false,
-                api: true,
-            },
-        };
-        assert!(!should_expose(&rule, ExposureChannel::Dashboard));
-        assert!(should_expose(&rule, ExposureChannel::BacnetIp));
-        assert!(!should_expose(&rule, ExposureChannel::Mqtt));
-        assert!(should_expose(&rule, ExposureChannel::Api));
-    }
-
-    #[test]
-    fn should_expose_all_channels_enabled() {
-        let rule = PointRule {
-            device_id: 1,
-            object_type: 0,
-            object_instance: 1,
-            mode: PointMode::Processed,
-            processors: Vec::new(),
-            exposure: ExposureConfig::default(),
-        };
-        assert!(should_expose(&rule, ExposureChannel::Dashboard));
-        assert!(should_expose(&rule, ExposureChannel::BacnetIp));
-        assert!(should_expose(&rule, ExposureChannel::Mqtt));
-        assert!(should_expose(&rule, ExposureChannel::Api));
-    }
-
-    #[test]
-    fn should_expose_all_channels_disabled() {
-        let rule = PointRule {
-            device_id: 1,
-            object_type: 0,
-            object_instance: 1,
-            mode: PointMode::Processed,
-            processors: Vec::new(),
-            exposure: ExposureConfig {
-                dashboard: false,
-                bacnet_ip: false,
-                mqtt: false,
-                api: false,
-            },
-        };
-        assert!(!should_expose(&rule, ExposureChannel::Dashboard));
-        assert!(!should_expose(&rule, ExposureChannel::BacnetIp));
-        assert!(!should_expose(&rule, ExposureChannel::Mqtt));
-        assert!(!should_expose(&rule, ExposureChannel::Api));
     }
 }
 

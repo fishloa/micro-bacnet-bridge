@@ -3,7 +3,7 @@
 //! `BridgeConfig` is designed to be stored in the last flash sector using
 //! the Pico SDK flash API. The `magic` field acts as a validity marker.
 //!
-//! Schema version 4 — adds TLS, OTA, API tokens, Operator role, and PointRule pipeline.
+//! Schema version 5 — replaces inline processors/ExposureConfig with Convertor table.
 
 use heapless::{String, Vec};
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 pub const MAGIC: u32 = 0xBAC0_CA1E;
 
 /// Current schema version. Increment when fields are added/removed.
-pub const CONFIG_VERSION: u16 = 4;
+pub const CONFIG_VERSION: u16 = 5;
 
 fn default_magic() -> u32 {
     MAGIC
@@ -469,41 +469,37 @@ pub enum Processor {
     MapStates(Vec<String<12>, 8>),
 }
 
-/// Which external channels a point should be published to.
+/// A named, reusable pipeline of [`Processor`] steps.
+///
+/// Convertors are stored globally in [`BridgeConfig::convertors`] (max 16) and
+/// referenced by ID from [`PointRule::convertor_id`].  Keeping the pipeline in a
+/// shared table avoids duplicating processor lists across every point rule.
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct ExposureConfig {
-    /// Show on the admin UI dashboard.
-    pub dashboard: bool,
-    /// Forward to BACnet/IP subscribers.
-    pub bacnet_ip: bool,
-    /// Publish to MQTT broker.
-    pub mqtt: bool,
-    /// Expose via HTTP REST API.
-    pub api: bool,
+pub struct Convertor {
+    /// Short identifier used to link a [`PointRule`] to this convertor (max 16 chars).
+    pub id: String<16>,
+    /// Human-readable name shown in the admin UI (max 32 chars).
+    pub name: String<32>,
+    /// Ordered processing steps applied forward (BACnet → display) and
+    /// in reverse (display → BACnet) when writing.
+    #[serde(default)]
+    pub processors: Vec<Processor, 4>,
 }
 
-impl Default for ExposureConfig {
-    fn default() -> Self {
-        Self {
-            dashboard: true,
-            bacnet_ip: true,
-            mqtt: true,
-            api: true,
-        }
-    }
-}
-
-/// Per-point processing and routing rule, replacing the old `PointConfig`.
+/// Per-point processing and routing rule.
 ///
 /// Each `PointRule` targets one BACnet object (identified by device ID + object type +
 /// instance) and specifies how the bridge should handle its value.
 ///
+/// Exposure is now binary: a point is either active (Passthrough or Processed) or
+/// ignored (`Ignore` mode). Per-channel exposure flags have been removed.
+///
 /// # Memory budget
 ///
 /// `PointRule` is stored in a `Vec<PointRule, 64>` inline array in `BridgeConfig`.
-/// The processors field holds up to 4 `Processor` steps, each at most ~110 bytes
-/// (for `MapStates` with 8 × 12-char labels). Total per-rule: ~480 bytes.
-/// 64 rules × ~480 bytes = ~30 KB — fits within the SRAM budget.
+/// With `convertor_id` (16 bytes) replacing the inline processor vec (~450 bytes)
+/// and `ExposureConfig` (~4 bytes), each rule shrinks to ~80 bytes.
+/// 64 rules × ~80 bytes = ~5 KB — well within the SRAM budget.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct PointRule {
     /// BACnet device instance number of the owning device.
@@ -515,13 +511,10 @@ pub struct PointRule {
     /// How the bridge should treat this point.
     #[serde(default)]
     pub mode: PointMode,
-    /// Ordered list of transformations applied to the raw value (in `Processed` mode).
-    /// Up to 4 steps.
+    /// ID of the [`Convertor`] to apply when `mode` is [`PointMode::Processed`].
+    /// Empty string means no convertor (acts like Passthrough).
     #[serde(default)]
-    pub processors: Vec<Processor, 4>,
-    /// Which channels should see this point's processed value.
-    #[serde(default)]
-    pub exposure: ExposureConfig,
+    pub convertor_id: String<16>,
 }
 
 // ---------------------------------------------------------------------------
@@ -583,11 +576,12 @@ pub struct BridgeConfig {
     /// Named API bearer tokens (max 16).
     #[serde(default)]
     pub tokens: Vec<TokenConfig, 16>,
+    /// Named value convertors referenced by point rules (max 16).
+    #[serde(default)]
+    pub convertors: Vec<Convertor, 16>,
     /// Per-point processing rules (max 64).
     ///
-    /// The capacity is capped at 64 to keep `BridgeConfig` within SRAM limits
-    /// (~30 KB for the points table). Points without explicit rules use passthrough
-    /// defaults implicitly.
+    /// Points without explicit rules use passthrough defaults implicitly.
     #[serde(default)]
     pub points: Vec<PointRule, 64>,
 }
@@ -609,6 +603,7 @@ impl Default for BridgeConfig {
             ota: OtaConfig::default(),
             users: Vec::new(),
             tokens: Vec::new(),
+            convertors: Vec::new(),
             points: Vec::new(),
         }
     }
@@ -698,8 +693,8 @@ mod tests {
     }
 
     #[test]
-    fn config_version_is_4() {
-        assert_eq!(CONFIG_VERSION, 4);
+    fn config_version_is_5() {
+        assert_eq!(CONFIG_VERSION, 5);
     }
 
     #[test]
@@ -985,22 +980,13 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // PointRule / ExposureConfig
+    // PointRule / Convertor
     // -----------------------------------------------------------------------
 
     #[test]
     fn point_rule_default_mode_is_passthrough() {
         let mode = PointMode::default();
         assert_eq!(mode, PointMode::Passthrough);
-    }
-
-    #[test]
-    fn exposure_config_all_true_by_default() {
-        let exp = ExposureConfig::default();
-        assert!(exp.dashboard);
-        assert!(exp.bacnet_ip);
-        assert!(exp.mqtt);
-        assert!(exp.api);
     }
 
     #[test]
@@ -1012,8 +998,7 @@ mod tests {
                 object_type: 0,
                 object_instance: 42,
                 mode: PointMode::Passthrough,
-                processors: Vec::new(),
-                exposure: ExposureConfig::default(),
+                convertor_id: String::new(),
             })
             .unwrap();
 
@@ -1033,32 +1018,51 @@ mod tests {
             object_type: 3,
             object_instance: 1,
             mode: PointMode::Ignore,
-            processors: Vec::new(),
-            exposure: ExposureConfig::default(),
+            convertor_id: String::new(),
         };
         assert_eq!(rule.mode, PointMode::Ignore);
     }
 
     #[test]
-    fn point_rule_processed_with_scale_processor() {
-        let mut processors: Vec<Processor, 4> = Vec::new();
-        processors
-            .push(Processor::Scale {
-                factor: 0.1,
-                offset: -40.0,
-            })
-            .unwrap();
+    fn point_rule_processed_with_convertor_id() {
+        let mut id: String<16> = String::new();
+        let _ = id.push_str("temp-c");
 
         let rule = PointRule {
             device_id: 100,
             object_type: 0,
             object_instance: 1,
             mode: PointMode::Processed,
-            processors,
-            exposure: ExposureConfig::default(),
+            convertor_id: id,
         };
         assert_eq!(rule.mode, PointMode::Processed);
-        assert_eq!(rule.processors.len(), 1);
+        assert_eq!(rule.convertor_id.as_str(), "temp-c");
+    }
+
+    #[test]
+    fn convertor_round_trip() {
+        let mut cfg = BridgeConfig::default();
+
+        let mut c_id: String<16> = String::new();
+        let _ = c_id.push_str("temp-c");
+        let mut c_name: String<32> = String::new();
+        let _ = c_name.push_str("Temperature (C)");
+        let mut processors: Vec<Processor, 4> = Vec::new();
+        processors.push(Processor::SetUnit(62)).unwrap();
+        cfg.convertors
+            .push(Convertor {
+                id: c_id,
+                name: c_name,
+                processors,
+            })
+            .unwrap();
+
+        let mut buf = [0u8; 8192];
+        let json = serde_json_core::to_slice(&cfg, &mut buf).unwrap();
+        let (decoded, _): (BridgeConfig, _) = serde_json_core::from_slice(&buf[..json]).unwrap();
+        assert_eq!(decoded.convertors.len(), 1);
+        assert_eq!(decoded.convertors[0].id.as_str(), "temp-c");
+        assert_eq!(decoded.convertors[0].processors.len(), 1);
     }
 
     #[test]
@@ -1081,20 +1085,6 @@ mod tests {
         let mut processors: Vec<Processor, 4> = Vec::new();
         processors.push(Processor::MapStates(states)).unwrap();
         assert_eq!(processors.len(), 1);
-    }
-
-    #[test]
-    fn exposure_config_partial_exposure() {
-        let exp = ExposureConfig {
-            dashboard: true,
-            bacnet_ip: false,
-            mqtt: true,
-            api: false,
-        };
-        assert!(exp.dashboard);
-        assert!(!exp.bacnet_ip);
-        assert!(exp.mqtt);
-        assert!(!exp.api);
     }
 
     // -----------------------------------------------------------------------
@@ -1365,8 +1355,7 @@ mod tests {
                     object_type: 0,
                     object_instance: i,
                     mode: PointMode::Passthrough,
-                    processors: Vec::new(),
-                    exposure: ExposureConfig::default(),
+                    convertor_id: String::new(),
                 })
                 .unwrap();
         }
@@ -1544,7 +1533,7 @@ mod tests {
     /// A magic field set to 0 survives deserialization but fails `validate()`.
     #[test]
     fn deserialize_bad_magic_survives_but_fails_validate() {
-        let json = br#"{"magic":0,"version":4,"provisioned":false}"#;
+        let json = br#"{"magic":0,"version":5,"provisioned":false}"#;
         let (cfg, _): (BridgeConfig, _) =
             serde_json_core::from_slice(json).expect("bad magic must deserialize without panic");
         assert!(!cfg.validate(), "bad magic must fail validate()");

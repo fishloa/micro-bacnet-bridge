@@ -48,9 +48,9 @@ pub use bacnet::{
 };
 pub use bridge::{BridgeStateInner, DeviceEntry, PointEntry, MAX_DEVICES, MAX_POINTS_PER_DEVICE};
 pub use config::{
-    BacnetDeviceConfig, BridgeConfig, ExposureConfig, MqttConfig, NetworkConfig, NtpConfig,
-    OtaConfig, PointMode, PointRule, Processor, SnmpConfig, SyslogConfig, TlsConfig, TokenConfig,
-    UserConfig, UserRole,
+    BacnetDeviceConfig, BridgeConfig, Convertor, MqttConfig, NetworkConfig, NtpConfig, OtaConfig,
+    PointMode, PointRule, Processor, SnmpConfig, SyslogConfig, TlsConfig, TokenConfig, UserConfig,
+    UserRole,
 };
 pub use error::{BridgeError, DecodeError, EncodeError};
 pub use ipc::{BacnetPdu, RingBuffer};

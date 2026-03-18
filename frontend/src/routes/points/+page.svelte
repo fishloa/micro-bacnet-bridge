@@ -3,23 +3,28 @@
 	import {
 		api,
 		OBJECT_TYPE_INFO,
-		ENGINEERING_UNITS,
-		isNumericType,
 		pointKey,
+		connectSSE,
 	} from '$lib/api';
-	import type { BacnetPoint, BacnetDevice, PointConfig } from '$lib/api';
-	import { exposureConfig } from '$lib/stores';
+	import type { BacnetPoint, BacnetDevice, PointConfig, Convertor, ProcessorDef } from '$lib/api';
 
-	// --- State ---
+	// ---------------------------------------------------------------------------
+	// State
+	// ---------------------------------------------------------------------------
+
 	let devices: BacnetDevice[] = $state([]);
 	let selectedDeviceId: number | null = $state(null);
 	let allPoints: BacnetPoint[] = $state([]);
 	let configs: Map<string, PointConfig> = $state(new Map());
+	let convertors: Convertor[] = $state([]);
 	let dirty: Set<string> = $state(new Set());
 	let filterText: string = $state('');
 	let loading: boolean = $state(true);
 	let saveStatus: 'idle' | 'saving' | 'success' | 'error' = $state('idle');
 	let saveMessage: string = $state('');
+
+	/** Live BACnet values keyed by `{deviceId}:{objectType}:{objectInstance}` */
+	let liveValues: Map<string, string | number | boolean> = $state(new Map());
 
 	let selectedDevice = $derived(devices.find(d => d.id === selectedDeviceId) ?? null);
 
@@ -29,12 +34,18 @@
 		currentPage = 1;
 	}
 
-	// --- Pagination ---
+	// ---------------------------------------------------------------------------
+	// Pagination
+	// ---------------------------------------------------------------------------
+
 	const PAGE_SIZE_OPTIONS = [25, 50, 100, 0]; // 0 = All
 	let pageSize: number = $state(50);
 	let currentPage: number = $state(1);
 
-	// --- Derived: merged rows ---
+	// ---------------------------------------------------------------------------
+	// Derived: merged rows
+	// ---------------------------------------------------------------------------
+
 	type Row = {
 		point: BacnetPoint;
 		config: PointConfig;
@@ -80,7 +91,6 @@
 
 	// Reset to page 1 when filter changes
 	$effect(() => {
-		// access filterText to establish the reactive dependency
 		filterText;
 		currentPage = 1;
 	});
@@ -90,51 +100,67 @@
 		if (currentPage > totalPages) currentPage = totalPages;
 	});
 
+	// ---------------------------------------------------------------------------
+	// Defaults
+	// ---------------------------------------------------------------------------
+
 	function defaultConfig(p: BacnetPoint): PointConfig {
-		// Default conversion unit: use discoveredUnit if available and > 0
-		const engineeringUnit = (p.discoveredUnit > 0) ? p.discoveredUnit : 95;
 		return {
 			objectType: p.objectType,
 			objectInstance: p.objectInstance,
-			scale: 1.0,
-			offset: 0.0,
-			engineeringUnit,
-			bridgeToBacnetIp: true,
-			bridgeToMqtt: true,
-			showOnDashboard: true,
-			exposeInApi: true,
-			stateText: [],
+			mode: 'passthrough',
+			convertorId: '',
 		};
 	}
 
-	// --- Load data ---
+	// ---------------------------------------------------------------------------
+	// Load data & SSE
+	// ---------------------------------------------------------------------------
+
+	let disconnectSSE: (() => void) | null = null;
+
 	onMount(async () => {
 		loading = true;
 		try {
-			const devList = await api.getDevices();
+			const [devList, cfgList, convList] = await Promise.all([
+				api.getDevices(),
+				api.getPointConfigs(),
+				api.getConvertors(),
+			]);
+
 			devices = devList;
-			const targetDevice = devList.find(d => d.online) ?? devList[0];
-			if (targetDevice) {
-				selectedDeviceId = targetDevice.id;
-				allPoints = await api.getPoints(targetDevice.id);
-			}
-			const cfgList = await api.getPointConfigs();
+			convertors = convList;
+
 			const map = new Map<string, PointConfig>();
 			for (const cfg of cfgList) {
 				map.set(`${cfg.objectType}:${cfg.objectInstance}`, cfg);
 			}
 			configs = map;
+
+			const targetDevice = devList.find(d => d.online) ?? devList[0];
+			if (targetDevice) {
+				selectedDeviceId = targetDevice.id;
+				allPoints = await api.getPoints(targetDevice.id);
+			}
 		} finally {
 			loading = false;
 		}
+
+		// Connect SSE for live updates
+		disconnectSSE = connectSSE((updates) => {
+			const newMap = new Map(liveValues);
+			for (const [k, v] of Object.entries(updates)) {
+				newMap.set(k, v as string | number | boolean);
+			}
+			liveValues = newMap;
+		});
+
+		return () => disconnectSSE?.();
 	});
 
-	// --- Helpers ---
-	const MULTI_STATE_TYPES = new Set(['multi-state-input', 'multi-state-output', 'multi-state-value']);
-
-	function isMultiState(objectType: string): boolean {
-		return MULTI_STATE_TYPES.has(objectType);
-	}
+	// ---------------------------------------------------------------------------
+	// Helpers
+	// ---------------------------------------------------------------------------
 
 	function badgeClass(objectType: string): string {
 		const info = OBJECT_TYPE_INFO[objectType];
@@ -146,42 +172,56 @@
 		return OBJECT_TYPE_INFO[objectType]?.label ?? objectType;
 	}
 
-	function unitLabel(code: number): string {
-		return ENGINEERING_UNITS.find(u => u.code === code)?.label ?? String(code);
+	/** Live or static present value as a display string. */
+	function liveValue(p: BacnetPoint): string {
+		const liveKey = `${selectedDeviceId}:${p.objectType}:${p.objectInstance}`;
+		const live = liveValues.get(liveKey);
+		const raw = live !== undefined ? live : p.presentValue;
+		if (typeof raw === 'boolean') return raw ? 'Active' : 'Inactive';
+		return String(raw);
 	}
 
-	/** Raw BACnet value as a string for display. */
-	function rawValue(p: BacnetPoint): string {
-		if (typeof p.presentValue === 'boolean') return p.presentValue ? 'Active' : 'Inactive';
-		return String(p.presentValue);
+	/** Apply convertor processors to a raw value string for the "Converted Value" column. */
+	function convertedValue(rawStr: string, cfg: PointConfig): string | null {
+		if (cfg.mode !== 'convert' || !cfg.convertorId) return null;
+		const conv = convertors.find(c => c.id === cfg.convertorId);
+		if (!conv || conv.processors.length === 0) return null;
+
+		// Parse raw value
+		const raw = parseFloat(rawStr);
+		if (isNaN(raw) && rawStr !== 'Active' && rawStr !== 'Inactive') return null;
+
+		let value: number | string | boolean =
+			rawStr === 'Active' ? true : rawStr === 'Inactive' ? false : raw;
+
+		// Apply processors forward
+		for (const proc of conv.processors) {
+			value = applyProcessorFwd(value, proc);
+		}
+
+		if (typeof value === 'boolean') return value ? 'Active' : 'Inactive';
+		if (typeof value === 'number') return value.toFixed(3).replace(/\.?0+$/, '') || '0';
+		return String(value);
 	}
 
-	/** Resolved multi-state label, or null if not applicable. */
-	function resolvedStateLabel(p: BacnetPoint, cfg: PointConfig): string | null {
-		if (!isMultiState(p.objectType)) return null;
-		if (!cfg.stateText || cfg.stateText.length === 0) return null;
-		const stateNum = typeof p.presentValue === 'number'
-			? p.presentValue
-			: parseFloat(String(p.presentValue));
-		if (isNaN(stateNum) || stateNum < 1) return null;
-		const label = cfg.stateText[Math.round(stateNum) - 1];
-		return label ?? null;
+	function applyProcessorFwd(value: number | string | boolean, proc: ProcessorDef): number | string | boolean {
+		if (proc.type === 'set_unit') return value; // metadata only
+		if (proc.type === 'scale') {
+			if (typeof value !== 'number') return value;
+			return value * proc.factor + proc.offset;
+		}
+		if (proc.type === 'map_states') {
+			if (typeof value !== 'number') return value;
+			const idx = Math.round(value) - 1;
+			return proc.labels[idx] ?? value;
+		}
+		return value;
 	}
 
-	/** Computed (scaled) value for numeric non-multistate points when scale/offset is applied. */
-	function computedValue(p: BacnetPoint, cfg: PointConfig): string | null {
-		if (!isNumericType(p.objectType)) return null;
-		if (isMultiState(p.objectType)) return null;
-		if (cfg.scale === 1 && cfg.offset === 0) return null;
-		const raw = typeof p.presentValue === 'number' ? p.presentValue : parseFloat(String(p.presentValue));
-		if (isNaN(raw)) return null;
-		const converted = raw * cfg.scale + cfg.offset;
-		const label = unitLabel(cfg.engineeringUnit);
-		if (label === 'No Units') return converted.toFixed(3).replace(/\.?0+$/, '') || '0';
-		return `${converted.toFixed(3).replace(/\.?0+$/, '') || '0'} ${label}`;
-	}
+	// ---------------------------------------------------------------------------
+	// Mutation helpers
+	// ---------------------------------------------------------------------------
 
-	// --- Mutation helpers ---
 	function updateConfig(p: BacnetPoint, patch: Partial<PointConfig>) {
 		const key = pointKey(p);
 		const existing = configs.get(key) ?? defaultConfig(p);
@@ -194,44 +234,20 @@
 		dirty = newDirty;
 	}
 
-	function onScaleInput(p: BacnetPoint, e: Event) {
-		const val = parseFloat((e.target as HTMLInputElement).value);
-		if (!isNaN(val)) updateConfig(p, { scale: val });
+	function onModeChange(p: BacnetPoint, e: Event) {
+		const mode = (e.target as HTMLSelectElement).value as PointConfig['mode'];
+		updateConfig(p, { mode });
 	}
 
-	function onOffsetInput(p: BacnetPoint, e: Event) {
-		const val = parseFloat((e.target as HTMLInputElement).value);
-		if (!isNaN(val)) updateConfig(p, { offset: val });
+	function onConvertorChange(p: BacnetPoint, e: Event) {
+		const convertorId = (e.target as HTMLSelectElement).value;
+		updateConfig(p, { convertorId });
 	}
 
-	function onUnitChange(p: BacnetPoint, e: Event) {
-		const code = parseInt((e.target as HTMLSelectElement).value, 10);
-		updateConfig(p, { engineeringUnit: code });
-	}
+	// ---------------------------------------------------------------------------
+	// Save
+	// ---------------------------------------------------------------------------
 
-	function onBacnetIpChange(p: BacnetPoint, e: Event) {
-		updateConfig(p, { bridgeToBacnetIp: (e.target as HTMLInputElement).checked });
-	}
-
-	function onMqttChange(p: BacnetPoint, e: Event) {
-		updateConfig(p, { bridgeToMqtt: (e.target as HTMLInputElement).checked });
-	}
-
-	function onDashChange(p: BacnetPoint, e: Event) {
-		updateConfig(p, { showOnDashboard: (e.target as HTMLInputElement).checked });
-	}
-
-	function onApiChange(p: BacnetPoint, e: Event) {
-		updateConfig(p, { exposeInApi: (e.target as HTMLInputElement).checked });
-	}
-
-	function onStateTextInput(p: BacnetPoint, e: Event) {
-		const raw = (e.target as HTMLInputElement).value;
-		const labels = raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
-		updateConfig(p, { stateText: labels });
-	}
-
-	// --- Save ---
 	async function saveAll() {
 		if (dirty.size === 0) return;
 		saveStatus = 'saving';
@@ -324,184 +340,84 @@
 		<div class="table-wrap vui-card">
 			<table>
 				<colgroup>
-					<!-- BACnet MS/TP: Type, Name, Value, Unit (4 cols) -->
-					<col style="width: 52px" />
-					<col />
-					<col style="width: 120px" />
-					<col style="width: 90px" />
-					<!-- Conversion: Scale, Offset, Unit, Mapped Value (4 cols) -->
-					<col style="width: 80px" />
-					<col style="width: 80px" />
-					<col style="width: 100px" />
-					<col style="width: 140px" />
-					<!-- Exposure: Dash, B/IP, MQTT, API (4 cols) -->
-					<col style="width: 45px" />
-					<col style="width: 45px" />
-					<col style="width: 45px" />
-					<col style="width: 45px" />
+					<col style="width: 52px" />    <!-- Type -->
+					<col />                         <!-- Name -->
+					<col style="width: 130px" />   <!-- BACnet Value -->
+					<col style="width: 110px" />   <!-- Mode -->
+					<col style="width: 160px" />   <!-- Convertor -->
+					<col style="width: 130px" />   <!-- Converted Value -->
 				</colgroup>
 				<thead>
-					<tr class="super-header">
-						<th colspan="4" class="group-bacnet">BACnet MS/TP</th>
-						<th colspan="4" class="group-conversion">Conversion</th>
-						<th colspan="4" class="group-exposure">Exposure</th>
-					</tr>
-					<tr class="sub-header">
-						<!-- BACnet MS/TP group -->
-						<th class="border-group-start">Type</th>
+					<tr>
+						<th>Type</th>
 						<th>Name</th>
-						<th>Value</th>
-						<th>Unit</th>
-						<!-- Conversion group -->
-						<th class="border-group-start">Scale</th>
-						<th>Offset</th>
-						<th>Unit</th>
-						<th>Mapped</th>
-						<!-- Exposure group -->
-						<th class="border-group-start" style="text-align: center">Dash</th>
-						<th style="text-align: center">B/IP</th>
-						<th style="text-align: center">MQTT</th>
-						<th style="text-align: center">API</th>
+						<th>BACnet Value</th>
+						<th>Mode</th>
+						<th>Convertor</th>
+						<th>Converted Value</th>
 					</tr>
 				</thead>
 				<tbody>
 					{#each pagedRows as row (row.key)}
-						{@const numeric = isNumericType(row.point.objectType)}
-						{@const multiState = isMultiState(row.point.objectType)}
 						{@const isDirty = dirty.has(row.key)}
-						{@const stateLabel = resolvedStateLabel(row.point, row.config)}
-						{@const mapped = computedValue(row.point, row.config)}
-						{@const dUnit = row.point.discoveredUnit}
-						<tr class:row-dirty={isDirty}>
+						{@const raw = liveValue(row.point)}
+						{@const converted = convertedValue(raw, row.config)}
+						{@const isConvert = row.config.mode === 'convert'}
+						{@const isIgnored = row.config.mode === 'ignore'}
+						<tr class:row-dirty={isDirty} class:row-ignored={isIgnored}>
 							<!-- Type badge -->
-							<td class="border-group-start">
+							<td>
 								<span class={badgeClass(row.point.objectType)}>{badgeLabel(row.point.objectType)}</span>
 							</td>
 							<!-- Name + description -->
 							<td class="cell-name">
-								<span class="point-name">{row.point.objectName}</span>
+								<span class="point-name" class:text-muted={isIgnored}>{row.point.objectName}</span>
 								{#if row.point.description}
 									<span class="point-desc text-sub text-xs">{row.point.description}</span>
 								{/if}
 							</td>
-							<!-- BACnet raw value -->
-							<td class="cell-value mono">
-								<span class="raw-value">{rawValue(row.point)}</span>
-								{#if multiState}
-									<div class="state-text-input-wrap">
-										<input
-											class="vui-input compact-state-text"
-											type="text"
-											placeholder="Off,Heat,Cool,…"
-											value={row.config.stateText.join(', ')}
-											oninput={(e) => onStateTextInput(row.point, e)}
-											title="Comma-separated state labels (1-based)"
-										/>
-									</div>
-								{/if}
+							<!-- BACnet raw value (live) -->
+							<td class="cell-value mono" class:text-muted={isIgnored}>
+								{raw}
 							</td>
-							<!-- Discovered unit (read-only) -->
-							<td class="cell-discovered-unit">
-								{#if dUnit > 0 && dUnit !== 95}
-									<span class="discovered-unit-badge" title="Reported by device">{unitLabel(dUnit)}</span>
-								{:else}
-									<span class="text-sub text-sm">—</span>
-								{/if}
-							</td>
-							<!-- Scale -->
-							<td class="cell-input border-group-start">
-								{#if numeric && !multiState}
-									<input
-										class="vui-input compact-num"
-										type="number"
-										step="0.001"
-										value={row.config.scale}
-										oninput={(e) => onScaleInput(row.point, e)}
-									/>
-								{:else}
-									<span class="text-sub text-sm">—</span>
-								{/if}
-							</td>
-							<!-- Offset -->
+							<!-- Mode dropdown -->
 							<td class="cell-input">
-								{#if numeric && !multiState}
-									<input
-										class="vui-input compact-num"
-										type="number"
-										step="0.1"
-										value={row.config.offset}
-										oninput={(e) => onOffsetInput(row.point, e)}
-									/>
-								{:else}
-									<span class="text-sub text-sm">—</span>
-								{/if}
+								<select
+									class="vui-input compact-select"
+									value={row.config.mode}
+									onchange={(e) => onModeChange(row.point, e)}
+								>
+									<option value="passthrough">Passthrough</option>
+									<option value="convert">Convert</option>
+									<option value="ignore">Ignore</option>
+								</select>
 							</td>
-							<!-- Conversion unit -->
+							<!-- Convertor dropdown (only when mode=convert) -->
 							<td class="cell-input">
-								{#if numeric && !multiState}
+								{#if isConvert}
 									<select
-										class="vui-input compact-select"
-										value={row.config.engineeringUnit}
-										onchange={(e) => onUnitChange(row.point, e)}
+										class="vui-input compact-select-wide"
+										value={row.config.convertorId}
+										onchange={(e) => onConvertorChange(row.point, e)}
 									>
-										{#each ENGINEERING_UNITS as unit}
-											<option value={unit.code}>{unit.label}</option>
+										<option value="">— none —</option>
+										{#each convertors as c (c.id)}
+											<option value={c.id}>{c.name}</option>
 										{/each}
 									</select>
-								{:else if multiState && stateLabel !== null}
-									<span class="computed-value">{stateLabel}</span>
 								{:else}
 									<span class="text-sub text-sm">—</span>
 								{/if}
 							</td>
-							<!-- Mapped value -->
-							<td class="cell-mapped mono">
-								{#if multiState && stateLabel !== null}
-									<span class="computed-value">{stateLabel}</span>
-								{:else if !multiState && mapped !== null}
-									<span class="computed-value">{mapped}</span>
+							<!-- Converted value (live computed) -->
+							<td class="cell-converted mono">
+								{#if isConvert && converted !== null}
+									<span class="converted-value">{converted}</span>
+								{:else if isIgnored}
+									<span class="text-sub text-xs">ignored</span>
 								{:else}
 									<span class="text-sub text-sm">—</span>
 								{/if}
-							</td>
-							<!-- Dash -->
-							<td class="col-check border-group-start">
-								<input
-									type="checkbox"
-									class="vui-checkbox"
-									checked={row.config.showOnDashboard}
-									onchange={(e) => onDashChange(row.point, e)}
-								/>
-							</td>
-							<!-- B/IP -->
-							<td class="col-check">
-								<input
-									type="checkbox"
-									class="vui-checkbox"
-									checked={$exposureConfig.bacnetIpEnabled && row.config.bridgeToBacnetIp}
-									disabled={!$exposureConfig.bacnetIpEnabled}
-									onchange={(e) => onBacnetIpChange(row.point, e)}
-								/>
-							</td>
-							<!-- MQTT -->
-							<td class="col-check">
-								<input
-									type="checkbox"
-									class="vui-checkbox"
-									checked={$exposureConfig.mqttEnabled && row.config.bridgeToMqtt}
-									disabled={!$exposureConfig.mqttEnabled}
-									onchange={(e) => onMqttChange(row.point, e)}
-								/>
-							</td>
-							<!-- API -->
-							<td class="col-check">
-								<input
-									type="checkbox"
-									class="vui-checkbox"
-									checked={$exposureConfig.apiEnabled && row.config.exposeInApi}
-									disabled={!$exposureConfig.apiEnabled}
-									onchange={(e) => onApiChange(row.point, e)}
-								/>
 							</td>
 						</tr>
 					{/each}
@@ -534,9 +450,7 @@
 						({filteredRows.length} total)
 					</span>
 				{:else}
-					<span class="text-sm text-sub">
-						All {filteredRows.length} rows
-					</span>
+					<span class="text-sm text-sub">All {filteredRows.length} rows</span>
 				{/if}
 			</div>
 			<div class="pagination-right">
@@ -567,6 +481,7 @@
 		flex-shrink: 0;
 		padding-bottom: 2px;
 	}
+
 	.device-tab {
 		display: flex;
 		align-items: center;
@@ -580,35 +495,40 @@
 		cursor: pointer;
 		white-space: nowrap;
 	}
+
 	.device-tab:hover {
 		background: var(--vui-surface-hover);
 		color: var(--vui-text);
 	}
+
 	.device-tab.active {
 		background: var(--vui-accent-dim);
 		border-color: var(--vui-accent-border);
 		color: var(--vui-accent);
 	}
+
 	.device-tab-status {
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
 		flex-shrink: 0;
 	}
+
 	.device-tab-status.online {
 		background: var(--vui-accent);
 		box-shadow: 0 0 4px var(--vui-accent-glow);
 	}
+
 	.device-tab-status.offline {
 		background: var(--vui-text-dim);
 	}
-	.device-tab-name {
-		font-weight: var(--vui-font-medium);
-	}
+
+	.device-tab-name { font-weight: var(--vui-font-medium); }
+
 	.device-tab-id {
 		font-size: var(--vui-text-xs);
 		color: var(--vui-text-muted);
-		font-family: var(--vui-font-mono);
+		font-family: var(--vui-font-mono, monospace);
 	}
 
 	.page-root {
@@ -653,9 +573,7 @@
 		padding: 6px 12px;
 	}
 
-	.save-msg {
-		font-size: var(--vui-text-xs);
-	}
+	.save-msg { font-size: var(--vui-text-xs); }
 
 	.loading-state {
 		display: flex;
@@ -678,41 +596,7 @@
 		border-collapse: collapse;
 	}
 
-	/* Super-header row */
-	.super-header th {
-		text-align: left;
-		padding: 4px var(--vui-space-sm);
-		font-size: var(--vui-text-xs);
-		font-weight: var(--vui-font-medium);
-		color: var(--vui-text-muted);
-		letter-spacing: 0.03em;
-		position: sticky;
-		top: 0;
-		background: var(--vui-surface, var(--vui-bg));
-		z-index: 2;
-		white-space: nowrap;
-		border-bottom: none;
-	}
-
-	.group-bacnet {
-		border-left: 2px solid var(--vui-accent, #16a34a);
-		padding-left: 8px;
-	}
-
-	.group-conversion {
-		border-left: 2px solid var(--vui-border-accent, #7c3aed);
-		padding-left: 8px;
-		color: var(--vui-text-muted);
-	}
-
-	.group-exposure {
-		border-left: 2px solid var(--vui-border, #e5e7eb);
-		padding-left: 8px;
-		color: var(--vui-text-muted);
-	}
-
-	/* Sub-header row (column labels) */
-	.sub-header th {
+	thead th {
 		text-align: left;
 		padding: var(--vui-space-sm) var(--vui-space-sm);
 		font-size: var(--vui-text-xs);
@@ -722,7 +606,7 @@
 		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--vui-border);
 		position: sticky;
-		top: 25px; /* height of super-header row */
+		top: 0;
 		background: var(--vui-surface, var(--vui-bg));
 		z-index: 1;
 		white-space: nowrap;
@@ -735,14 +619,7 @@
 		vertical-align: middle;
 	}
 
-	/* Group divider — left border on the first column of each group */
-	.border-group-start {
-		border-left: 1px solid color-mix(in srgb, var(--vui-border) 60%, transparent);
-	}
-
-	tr:hover td {
-		background: var(--vui-surface-hover);
-	}
+	tr:hover td { background: var(--vui-surface-hover); }
 
 	tr.row-dirty td {
 		background: color-mix(in srgb, var(--vui-accent-dim, #1e40af22) 60%, transparent);
@@ -752,21 +629,20 @@
 		background: color-mix(in srgb, var(--vui-accent-dim, #1e40af22) 80%, var(--vui-surface-hover));
 	}
 
+	tr.row-ignored td {
+		opacity: 0.5;
+	}
+
 	.cell-name {
 		display: flex;
 		flex-direction: column;
 		gap: 1px;
 	}
 
-	.point-name {
-		font-weight: var(--vui-font-medium);
-	}
+	.point-name { font-weight: var(--vui-font-medium); }
 
 	.point-desc {
 		color: var(--vui-text-muted);
-	}
-
-	.text-xs {
 		font-size: var(--vui-text-xs);
 	}
 
@@ -774,82 +650,34 @@
 		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
 		color: var(--vui-text);
-		vertical-align: top;
 	}
 
-	.cell-mapped {
+	.cell-converted {
 		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
 	}
 
-	/* Discovered unit cell — read-only, muted badge style */
-	.cell-discovered-unit {
-		font-size: var(--vui-text-xs);
+	.converted-value {
+		color: var(--vui-text);
 	}
 
-	.discovered-unit-badge {
-		display: inline-block;
-		padding: 1px 6px;
-		border-radius: 4px;
-		background: color-mix(in srgb, var(--vui-border) 40%, transparent);
-		color: var(--vui-text-muted);
-		font-size: var(--vui-text-xs);
-		font-family: var(--vui-font-mono, monospace);
-	}
-
-	.raw-value {
-		display: block;
-	}
-
-	.computed-value {
-		color: var(--vui-accent, #16a34a);
-		font-weight: var(--vui-font-medium);
-	}
-
-	.state-text-input-wrap {
-		margin-top: 3px;
-	}
-
-	.compact-state-text {
-		width: 110px;
-		padding: 3px 6px;
-		font-size: var(--vui-text-xs);
-		font-family: var(--vui-font-mono, monospace);
-	}
-
-	.cell-input {
-		padding: 4px var(--vui-space-sm);
-	}
-
-	.compact-num {
-		width: 70px;
-		padding: 4px 6px;
-		font-size: var(--vui-text-sm);
-		font-family: var(--vui-font-mono, monospace);
-		text-align: right;
-	}
+	.cell-input { padding: 4px var(--vui-space-sm); }
 
 	.compact-select {
-		width: 90px;
+		width: 100px;
 		padding: 4px 6px;
 		font-size: var(--vui-text-sm);
 	}
 
-	.col-check {
-		text-align: center;
-		padding: 4px 0;
+	.compact-select-wide {
+		width: 150px;
+		padding: 4px 6px;
+		font-size: var(--vui-text-sm);
 	}
 
-	.vui-checkbox {
-		cursor: pointer;
-		width: 15px;
-		height: 15px;
-		accent-color: var(--vui-accent);
-	}
+	.mono { font-family: var(--vui-font-mono, monospace); }
 
-	.mono {
-		font-family: var(--vui-font-mono, monospace);
-	}
+	.text-muted { color: var(--vui-text-muted); }
 
 	/* Pagination bar */
 	.pagination-bar {
