@@ -1,6 +1,6 @@
 # micro-bacnet-bridge
 
-BACnet MS/TP to BACnet/IP bridge running on the WIZnet W5500-EVB-Pico-PoE (RP2040 + W5500).
+BACnet MS/TP to BACnet/IP bridge running on WIZnet W5500-EVB-Pico-PoE (RP2040) or W5500-EVB-Pico2 (RP2350).
 
 Hybrid Rust + C firmware: embassy-rs async networking on Core 0, bacnet-stack MS/TP master on Core 1.
 
@@ -18,33 +18,21 @@ Point values update in real time via Server-Sent Events. Changed values flash gr
 |-----------|--------------|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Config](docs/screenshots/config.png) |
 
-| Users | System Status |
-|-------|---------------|
-| ![Users](docs/screenshots/users.png) | ![Status](docs/screenshots/status.png) |
+| Points Configuration | System Status |
+|---------------------|---------------|
+| ![Points](docs/screenshots/points-config.png) | ![Status](docs/screenshots/status.png) |
 
-## Hardware
+## Supported Hardware
 
-- **MCU:** RP2040 dual-core Cortex-M0+ @ 133 MHz, 264 KB SRAM, 2 MB flash
+| Board | MCU | RAM | Flash | Target |
+|-------|-----|-----|-------|--------|
+| W5500-EVB-Pico-PoE | RP2040 (Cortex-M0+ @ 133 MHz) | 264 KB | 2 MB | `thumbv6m-none-eabi` |
+| W5500-EVB-Pico2 | RP2350 (Cortex-M33 @ 150 MHz) | 520 KB | 4 MB | `thumbv8m.main-none-eabihf` |
+
+Both boards share the same pin mapping:
 - **Ethernet:** W5500 hardwired TCP/IP via SPI0 (GPIO16-21)
 - **RS-485:** SP3485 transceiver on UART1 (GPIO4=TX, GPIO5=RX, GPIO3=DE/RE)
-- **Power:** WIZPoE-P1 802.3af PoE module via RJ45
-
-### Wiring
-
-```
-RP2040          W5500-EVB-Pico (internal)
-GPIO16  ────►   MISO
-GPIO17  ────►   CS
-GPIO18  ────►   SCK
-GPIO19  ────►   MOSI
-GPIO20  ────►   RST
-GPIO21  ────►   INT
-
-RP2040          SP3485
-GPIO4   ────►   DI  (TX)
-GPIO5   ◄────   RO  (RX)
-GPIO3   ────►   DE + RE (direction)
-```
+- **Power:** 802.3af PoE via RJ45
 
 ## Architecture
 
@@ -56,24 +44,45 @@ Core 0 (Rust / embassy-rs)           Core 1 (C / bacnet-stack)
 │ │ BACnet/IP :47808 │ │◄──────────►│ UART1 + SP3485      │
 │ │ HTTP :80         │ │  +spinlock  │ DE/RE control       │
 │ │ mDNS :5353       │ │             └────────────────────┘
-│ │ DHCP             │ │
+│ │ MQTT :1883       │ │
+│ │ SNMP :161        │ │
+│ │ NTP / Syslog     │ │
+│ │ DHCP + DNS       │ │
 │ └──────────────────┘ │
 │ bridge logic          │
 │ config (flash)        │
-│ auth                  │
 └──────────────────────┘
 ```
 
 ## Features
 
 - **Bidirectional BACnet bridge** — forwards all services between MS/TP and BACnet/IP
-- **Web admin dashboard** — real-time point values, config, user management
+- **Web admin dashboard** — real-time point values with SSE, inline write, regex filter
+- **Points configuration** — per-point scale/offset, engineering units, state text labels, exposure control
+- **MQTT + Home Assistant** — publish point values, auto-discovery with configurable prefix
+- **NTP time sync** — DHCP-discovered or manual NTP pool servers
+- **SNMP v2c agent** — system MIB (sysDescr, sysUpTime, sysName) for network monitoring
+- **Syslog (RFC 5424)** — ship logs to a central syslog server
 - **mDNS/Bonjour discovery** — `bacnet-bridge.local`, `_http._tcp`, `_bacnet._udp` services
+- **OTA firmware updates** — upload new firmware via HTTP, ARM vector table validation
 - **DHCP + static IP** — auto-config with flash-persisted fallback
 - **REST API** — full OpenAPI 3.1 spec at `/api/v1`
-- **SSE live updates** — point values stream at 1 Hz, only changed values
+- **Engineering units** — 100+ BACnet unit codes mapped to HA unit strings with conversion
+- **Dual board support** — Pico (RP2040) and Pico2 (RP2350) from same codebase
 - **PoE powered** — single RJ45 cable for power + network
 - **No cloud dependencies** — fully local operation
+
+## Versioning
+
+Firmware version format: `major.minor.build-board`
+
+- **major.minor** from `Cargo.toml` (e.g., `0.1`)
+- **build** auto-incremented by CI (`GITHUB_RUN_NUMBER`)
+- **board** target platform (`pico` or `pico2`)
+
+Examples: `0.1.42-pico`, `0.1.42-pico2`, `0.1.0-pico` (local build)
+
+Version is exposed in: mDNS TXT records, `/api/v1/system/status`, SNMP sysDescr, startup log.
 
 ## Building
 
@@ -81,15 +90,15 @@ Core 0 (Rust / embassy-rs)           Core 1 (C / bacnet-stack)
 
 ```bash
 # Rust toolchain
-rustup target add thumbv6m-none-eabi
+rustup target add thumbv6m-none-eabi        # Pico (RP2040)
+rustup target add thumbv8m.main-none-eabihf  # Pico2 (RP2350)
 cargo install elf2uf2-rs
 
 # C cross-compiler
 brew install arm-none-eabi-gcc    # macOS
 # apt install gcc-arm-none-eabi   # Ubuntu
 
-# Frontend
-# Uses bun (not npm)
+# Frontend (uses bun, not npm)
 curl -fsSL https://bun.sh/install | bash
 ```
 
@@ -102,21 +111,27 @@ cd frontend && bun install && bun run build && cd ..
 # Embed web assets into firmware
 python3 tools/embed_assets.py
 
-# Build firmware
+# Build for Pico (RP2040) — default
 cargo build -p firmware --release --target thumbv6m-none-eabi
 
+# Build for Pico2 (RP2350)
+cargo build -p firmware --release --target thumbv8m.main-none-eabihf \
+  --features board-pico2 --no-default-features
+
 # Convert to UF2
-elf2uf2-rs target/thumbv6m-none-eabi/release/firmware micro-bacnet-bridge.uf2
+elf2uf2-rs target/thumbv6m-none-eabi/release/firmware micro-bacnet-bridge-pico.uf2
 ```
 
 ### Development (no hardware needed)
 
 ```bash
-# Run bridge-core unit tests on Mac
+# Run 287 bridge-core unit tests on Mac
 cargo test -p bridge-core
 
-# Check firmware compiles
+# Check firmware compiles for both boards
 cargo check -p firmware --target thumbv6m-none-eabi
+cargo check -p firmware --target thumbv8m.main-none-eabihf \
+  --features board-pico2 --no-default-features
 
 # Run frontend dev server with mock data + SSE
 cd frontend && bun run dev
@@ -124,10 +139,16 @@ cd frontend && bun run dev
 
 ## Flashing
 
-1. Hold BOOTSEL button on the W5500-EVB-Pico-PoE
+### USB (first flash)
+1. Hold BOOTSEL button on the board
 2. Connect USB cable (or power cycle over PoE while holding BOOTSEL)
-3. Copy `micro-bacnet-bridge.uf2` to the RPI-RP2 USB drive
+3. Copy `.uf2` file to the RPI-RP2 USB drive
 4. Device reboots and starts the bridge
+
+### OTA (subsequent updates)
+1. Navigate to System Status in the admin UI
+2. Upload the new `.bin` firmware file
+3. Device validates the image and reboots automatically
 
 ## First Boot
 
@@ -137,26 +158,36 @@ cd frontend && bun run dev
 4. On first access, create an admin user
 5. Configure BACnet settings (device ID, MS/TP MAC, baud rate)
 
+## Admin UI Pages
+
+| Page | Description |
+|------|-------------|
+| **Dashboard** | Live BACnet points with SSE updates, type badges, regex filter, tabs, inline write |
+| **Config** | Network, BACnet/MS-TP, NTP, Syslog, SNMP, MQTT (with HA discovery) |
+| **Points** | Per-point scale/offset, engineering units, state text labels, 4 exposure toggles (Dashboard/BACnet-IP/MQTT/API), pagination |
+| **Users** | Create/delete users with admin/viewer roles |
+| **Status** | Uptime, IP, hostname, firmware version, MS/TP stats, OTA update, reboot |
+
 ## Project Structure
 
 ```
 micro-bacnet-bridge/
-├── bridge-core/        # no_std Rust library (testable on host)
-│   └── src/            # BACnet types, NPDU codec, mDNS, config, IPC
-├── firmware/           # RP2040 embassy binary
-│   └── src/            # HTTP, SSE, mDNS, BACnet/IP, flash, Core 1
+├── bridge-core/        # no_std Rust library (testable on host, 287 tests)
+│   └── src/            # BACnet types, NPDU, mDNS, NTP, SNMP, MQTT, Syslog,
+│                       # config, IPC, engineering units, OTA validation
+├── firmware/           # RP2040/RP2350 embassy binary
+│   └── src/            # HTTP, SSE, mDNS, BACnet/IP, NTP, SNMP, MQTT,
+│                       # Syslog, DNS, OTA, flash config, Core 1 launch
 ├── csrc/               # C code for Core 1 MS/TP
 ├── frontend/           # SvelteKit admin UI (Verdant UI design system)
-├── tools/              # embed_assets.py
+├── tools/              # embed_assets.py, generate_docs.sh, pre-commit
 ├── docs/               # OpenAPI spec, screenshots
-└── .github/workflows/  # CI/CD
+└── .github/workflows/  # CI matrix (Pico + Pico2), tests, clippy, fmt
 ```
 
 ## API Documentation
 
 OpenAPI 3.1 spec: [`docs/openapi.yaml`](docs/openapi.yaml)
-
-Key endpoints:
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -165,7 +196,14 @@ Key endpoints:
 | PUT | `/api/v1/devices/{id}/points/{obj}` | Write a point value |
 | GET | `/api/v1/config/network` | Network configuration |
 | GET | `/api/v1/config/bacnet` | BACnet configuration |
-| GET | `/api/v1/system/status` | System status |
+| GET | `/api/v1/config/ntp` | NTP configuration |
+| GET | `/api/v1/config/mqtt` | MQTT configuration |
+| GET | `/api/v1/config/snmp` | SNMP configuration |
+| GET | `/api/v1/config/syslog` | Syslog configuration |
+| GET | `/api/v1/config/points` | Point configurations |
+| GET | `/api/v1/system/status` | System status + firmware version |
+| POST | `/api/v1/system/firmware` | OTA firmware upload |
+| POST | `/api/v1/system/reboot` | Reboot device |
 | GET | `/api/events` | SSE live point updates |
 
 ## License
