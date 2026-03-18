@@ -42,3 +42,5 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.playwright-mcp/
+frontend/VERDANT_UI_REFERENCE.md
