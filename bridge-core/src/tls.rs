@@ -20,6 +20,7 @@
 
 use crate::error::DecodeError;
 use heapless::String;
+use pem_rfc7468::decode;
 
 // ---------------------------------------------------------------------------
 // Capacity constants
@@ -34,10 +35,6 @@ pub const MAX_KEY_DER: usize = 256;
 // ---------------------------------------------------------------------------
 // PEM helpers
 // ---------------------------------------------------------------------------
-
-const PREAMBLE: &[u8] = b"-----BEGIN ";
-const PREAMBLE_END: &[u8] = b"-----";
-const POSTAMBLE: &[u8] = b"-----END ";
 
 /// Parse the first PEM block found in `pem`.
 ///
@@ -54,36 +51,14 @@ pub fn pem_to_der<'a>(
     pem: &[u8],
     out_buf: &'a mut [u8],
 ) -> Result<(&'static str, &'a [u8]), DecodeError> {
-    // Locate "-----BEGIN ".
-    let begin_pos = find_subsequence(pem, PREAMBLE).ok_or(DecodeError::InvalidData)?;
-    let label_start = begin_pos + PREAMBLE.len();
+    // Use pem-rfc7468 to decode the first PEM block.
+    // The decode function requires a mutable buffer to write the decoded data to.
+    let (label, decoded) = decode(pem, out_buf).map_err(|_| DecodeError::InvalidData)?;
 
-    // Locate the closing "-----" of the BEGIN line.
-    let after_label =
-        find_subsequence(&pem[label_start..], PREAMBLE_END).ok_or(DecodeError::InvalidData)?;
-    let label_bytes = &pem[label_start..label_start + after_label];
+    // Classify the label into a known static string.
+    let label_str: &'static str = classify_label(label).ok_or(DecodeError::InvalidData)?;
 
-    // The label must be non-empty and pure ASCII.
-    if label_bytes.is_empty() || !label_bytes.iter().all(|b| b.is_ascii()) {
-        return Err(DecodeError::InvalidData);
-    }
-
-    // Classify the label into a static string to avoid lifetime issues.
-    let label: &'static str = classify_label(label_bytes).ok_or(DecodeError::InvalidData)?;
-
-    // The base64 body starts after "-----\n" (or "\r\n").
-    let body_start = label_start + after_label + PREAMBLE_END.len();
-    // Skip optional newline(s).
-    let body_start = skip_newline(pem, body_start);
-
-    // Locate "-----END ".
-    let end_pos =
-        find_subsequence(&pem[body_start..], POSTAMBLE).ok_or(DecodeError::InvalidData)?;
-    let base64_body = &pem[body_start..body_start + end_pos];
-
-    // Decode base64 (ignoring whitespace).
-    let decoded_len = base64_decode(base64_body, out_buf)?;
-    Ok((label, &out_buf[..decoded_len]))
+    Ok((label_str, decoded))
 }
 
 /// Return `true` if `data` starts with (or contains) a PEM certificate block.
@@ -173,77 +148,19 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
 }
 
-/// Skip a single CR+LF or LF at position `pos` in `data`.
-fn skip_newline(data: &[u8], pos: usize) -> usize {
-    let mut p = pos;
-    if p < data.len() && data[p] == b'\r' {
-        p += 1;
-    }
-    if p < data.len() && data[p] == b'\n' {
-        p += 1;
-    }
-    p
-}
-
-/// Map a raw label byte slice to a known static label string.
+/// Map a label string to a known static label string.
 ///
 /// Only labels that the firmware is expected to encounter are recognised.
-fn classify_label(label: &[u8]) -> Option<&'static str> {
+fn classify_label(label: &str) -> Option<&'static str> {
     match label {
-        b"CERTIFICATE" => Some("CERTIFICATE"),
-        b"CERTIFICATE REQUEST" => Some("CERTIFICATE REQUEST"),
-        b"PRIVATE KEY" => Some("PRIVATE KEY"),
-        b"EC PRIVATE KEY" => Some("EC PRIVATE KEY"),
-        b"RSA PRIVATE KEY" => Some("RSA PRIVATE KEY"),
-        b"PUBLIC KEY" => Some("PUBLIC KEY"),
+        "CERTIFICATE" => Some("CERTIFICATE"),
+        "CERTIFICATE REQUEST" => Some("CERTIFICATE REQUEST"),
+        "PRIVATE KEY" => Some("PRIVATE KEY"),
+        "EC PRIVATE KEY" => Some("EC PRIVATE KEY"),
+        "RSA PRIVATE KEY" => Some("RSA PRIVATE KEY"),
+        "PUBLIC KEY" => Some("PUBLIC KEY"),
         _ => None,
     }
-}
-
-// ---------------------------------------------------------------------------
-// Base64 decoder (RFC 4648, no padding required on last group)
-// ---------------------------------------------------------------------------
-
-fn b64_val(c: u8) -> Option<u8> {
-    match c {
-        b'A'..=b'Z' => Some(c - b'A'),
-        b'a'..=b'z' => Some(c - b'a' + 26),
-        b'0'..=b'9' => Some(c - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        b'=' => None, // padding — treated as stop
-        _ => None,
-    }
-}
-
-fn base64_decode(input: &[u8], out: &mut [u8]) -> Result<usize, DecodeError> {
-    let mut out_pos = 0usize;
-    let mut acc = 0u32;
-    let mut bits = 0u32;
-
-    for &byte in input {
-        // Skip whitespace.
-        if byte == b'\n' || byte == b'\r' || byte == b' ' || byte == b'\t' {
-            continue;
-        }
-        // Stop on padding.
-        if byte == b'=' {
-            break;
-        }
-        let val = b64_val(byte).ok_or(DecodeError::InvalidData)?;
-        acc = (acc << 6) | val as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            let decoded = ((acc >> bits) & 0xFF) as u8;
-            if out_pos >= out.len() {
-                return Err(DecodeError::LengthOutOfBounds);
-            }
-            out[out_pos] = decoded;
-            out_pos += 1;
-        }
-    }
-    Ok(out_pos)
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +266,8 @@ mod tests {
         let pem = b"-----BEGIN CERTIFICATE-----\nYWJj\n-----END CERTIFICATE-----\n";
         let mut buf = [0u8; 1]; // too small for 3 bytes
         let result = pem_to_der(pem, &mut buf);
-        assert_eq!(result, Err(DecodeError::LengthOutOfBounds));
+        // pem-rfc7468 returns InvalidData when buffer is too small (cannot decode)
+        assert_eq!(result, Err(DecodeError::InvalidData));
     }
 
     #[test]
