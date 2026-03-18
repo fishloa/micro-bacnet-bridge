@@ -18,6 +18,12 @@ const SECTOR_SIZE: usize = 4096;
 /// Byte offset from start-of-flash where config is stored (last 4 KiB sector).
 const CONFIG_OFFSET: u32 = (FLASH_SIZE - SECTOR_SIZE) as u32;
 
+/// Identity sector: second-to-last 4 KiB sector. Stores the MAC address.
+/// This sector is NEVER erased by OTA or config writes — survives all reflashes.
+/// Layout: [magic: 4 bytes] [mac: 6 bytes] [padding: rest]
+const IDENTITY_OFFSET: u32 = (FLASH_SIZE - 2 * SECTOR_SIZE) as u32;
+const IDENTITY_MAGIC: [u8; 4] = [0x49, 0x44, 0x4E, 0x54]; // "IDNT"
+
 /// Scratch buffer for JSON encode/decode — fits inside the sector.
 const JSON_BUF_SIZE: usize = SECTOR_SIZE;
 
@@ -30,6 +36,68 @@ impl ConfigManager {
     /// Create a new `ConfigManager` from a flash peripheral.
     pub fn new(flash: Flash<'static, FLASH, Async, FLASH_SIZE>) -> Self {
         Self { flash }
+    }
+
+    /// Load MAC address from the identity sector. Returns None if not yet written.
+    pub fn load_mac(&mut self) -> Option<[u8; 6]> {
+        let mut buf = [0u8; 16];
+        if self.flash.blocking_read(IDENTITY_OFFSET, &mut buf).is_err() {
+            return None;
+        }
+        if buf[0..4] != IDENTITY_MAGIC {
+            return None;
+        }
+        let mut mac = [0u8; 6];
+        mac.copy_from_slice(&buf[4..10]);
+        // All zeros means not written
+        if mac == [0u8; 6] {
+            return None;
+        }
+        info!(
+            "identity: loaded MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
+        Some(mac)
+    }
+
+    /// Save MAC address to the identity sector. Only writes once — if the magic
+    /// is already present, this is a no-op (MAC is immutable after first boot).
+    pub fn save_mac(&mut self, mac: &[u8; 6]) {
+        // Check if already written
+        let mut buf = [0u8; 16];
+        if self.flash.blocking_read(IDENTITY_OFFSET, &mut buf).is_ok()
+            && buf[0..4] == IDENTITY_MAGIC
+        {
+            info!("identity: MAC already persisted, skipping write");
+            return;
+        }
+
+        // Write identity sector: [magic(4)] [mac(6)] [padding(rest)]
+        let mut sector = [0xFFu8; SECTOR_SIZE];
+        sector[0..4].copy_from_slice(&IDENTITY_MAGIC);
+        sector[4..10].copy_from_slice(mac);
+
+        if self
+            .flash
+            .blocking_erase(IDENTITY_OFFSET, IDENTITY_OFFSET + SECTOR_SIZE as u32)
+            .is_err()
+        {
+            error!("identity: flash erase error");
+            return;
+        }
+        // Write first 256 bytes (page-aligned)
+        if self
+            .flash
+            .blocking_write(IDENTITY_OFFSET, &sector[..256])
+            .is_err()
+        {
+            error!("identity: flash write error");
+            return;
+        }
+        info!(
+            "identity: saved MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
     }
 
     /// Consume the `ConfigManager` and return the underlying flash peripheral.

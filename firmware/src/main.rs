@@ -65,28 +65,27 @@ async fn main(spawner: Spawner) {
     let mut cfg_mgr = config::ConfigManager::new(flash);
     let mut bridge_config = cfg_mgr.load();
 
-    // MAC address: persisted in config. Generated from ROSC entropy on first boot.
-    let mac_addr = if bridge_config.mac_addr == [0u8; 6] {
-        let seed = rosc_random_seed();
-        let mac = [
-            0x02, // locally administered, unicast
-            (seed >> 8) as u8,
-            (seed >> 16) as u8,
-            (seed >> 24) as u8,
-            (seed >> 32) as u8,
-            (seed >> 40) as u8,
-        ];
-        bridge_config.mac_addr = mac;
-        // TODO: Persist MAC to flash once save() is verified stable.
-        // Temporarily disabled to debug boot failure after reboot.
-        // cfg_mgr.save(&bridge_config);
-        info!(
-            "first boot: generated MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
-        );
-        mac
-    } else {
-        bridge_config.mac_addr
+    // MAC address: stored in a dedicated identity flash sector that survives
+    // all reflashes (OTA and BOOTSEL). Generated from ROSC on first boot.
+    let mac_addr = match cfg_mgr.load_mac() {
+        Some(mac) => mac,
+        None => {
+            let seed = rosc_random_seed();
+            let mac = [
+                0x02, // locally administered, unicast
+                (seed >> 8) as u8,
+                (seed >> 16) as u8,
+                (seed >> 24) as u8,
+                (seed >> 32) as u8,
+                (seed >> 40) as u8,
+            ];
+            cfg_mgr.save_mac(&mac);
+            info!(
+                "first boot: generated MAC {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+            );
+            mac
+        }
     };
 
     // If hostname is factory default, make it unique with last 3 MAC bytes

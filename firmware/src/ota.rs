@@ -60,13 +60,14 @@ const FIRMWARE_OFFSET: u32 = 0x100;
 const SECTOR_SIZE: usize = 4096;
 
 /// Last flash sector is reserved for config — do not overwrite it.
-const CONFIG_SECTOR_OFFSET: u32 = (FLASH_SIZE - SECTOR_SIZE) as u32;
+/// Last two flash sectors are reserved (identity + config). OTA must not touch them.
+const PROTECTED_OFFSET: u32 = (FLASH_SIZE - 2 * SECTOR_SIZE) as u32;
 
 /// Number of flash sectors available for firmware (everything between boot2
 /// and the config sector, inclusive of the first sector that contains boot2).
-/// We write from `FIRMWARE_OFFSET` up to `CONFIG_SECTOR_OFFSET - 1`.
+/// We write from `FIRMWARE_OFFSET` up to `PROTECTED_OFFSET - 1`.
 const MAX_IMAGE_SECTORS: usize =
-    (CONFIG_SECTOR_OFFSET as usize - FIRMWARE_OFFSET as usize) / SECTOR_SIZE;
+    (PROTECTED_OFFSET as usize - FIRMWARE_OFFSET as usize) / SECTOR_SIZE;
 
 /// Maximum image size we will accept (must not overrun the config sector).
 const MAX_SAFE_IMAGE: usize = MAX_IMAGE_SECTORS * SECTOR_SIZE;
@@ -168,7 +169,7 @@ pub async fn handle_firmware_stream<R: PicoRead>(
 
         // Erase + write sector
         let flash_offset = FIRMWARE_OFFSET + (sector_idx * SECTOR_SIZE) as u32;
-        if flash_offset + SECTOR_SIZE as u32 > CONFIG_SECTOR_OFFSET {
+        if flash_offset + SECTOR_SIZE as u32 > PROTECTED_OFFSET {
             error!("ota: would overwrite config sector — aborting");
             return Err("Internal error: image would overwrite config");
         }
@@ -329,7 +330,7 @@ pub async fn handle_firmware_upload(
         // ---- 4. Erase + write the sector ----
         let flash_offset = FIRMWARE_OFFSET + (sector_idx * SECTOR_SIZE) as u32;
 
-        if flash_offset + SECTOR_SIZE as u32 > CONFIG_SECTOR_OFFSET {
+        if flash_offset + SECTOR_SIZE as u32 > PROTECTED_OFFSET {
             // Should never happen given the size check above.
             error!(
                 "ota: sector {} would overwrite config sector — aborting",
@@ -520,7 +521,7 @@ async fn handle_uf2_upload(
         let flash_offset = target_addr.wrapping_sub(0x10000000);
 
         // Check bounds
-        if flash_offset + payload.len() as u32 > CONFIG_SECTOR_OFFSET {
+        if flash_offset + payload.len() as u32 > PROTECTED_OFFSET {
             send_response(socket, 400, "UF2 block targets config sector").await;
             return;
         }
