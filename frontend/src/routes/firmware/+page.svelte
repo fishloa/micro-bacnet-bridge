@@ -114,7 +114,7 @@
 </svelte:head>
 
 <div class="firmware-page">
-	<h1>Firmware</h1>
+	<h1 class="vui-page-title">Firmware</h1>
 
 	{#if error}
 		<div class="vui-alert vui-alert-danger">{error}</div>

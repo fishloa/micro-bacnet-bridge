@@ -125,7 +125,7 @@
 
 <div class="tls-page">
 	<div class="page-header">
-		<h1>TLS / HTTPS</h1>
+		<h1 class="vui-page-title">TLS / HTTPS</h1>
 	</div>
 
 	{#if error}

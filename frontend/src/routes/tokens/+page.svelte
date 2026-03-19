@@ -66,7 +66,7 @@
 
 <div class="tokens-page">
 	<div class="page-header">
-		<h1>API Tokens</h1>
+		<h1 class="vui-page-title">API Tokens</h1>
 		<button class="vui-btn vui-btn-primary vui-btn-sm" onclick={() => { showCreate = !showCreate; newPlainToken = ''; }}>
 			{showCreate ? 'Cancel' : '+ New Token'}
 		</button>

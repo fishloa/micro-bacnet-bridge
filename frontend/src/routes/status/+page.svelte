@@ -102,7 +102,7 @@
 </svelte:head>
 
 <div class="status-page">
-	<h1>System Status</h1>
+	<h1 class="vui-page-title">System Status</h1>
 
 	{#if status}
 		<div class="status-grid vui-animate-fade-in">

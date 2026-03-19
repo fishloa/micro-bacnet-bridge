@@ -292,7 +292,7 @@
 
 	<div class="page-header">
 		<div class="header-left">
-			<h1 class="page-title">
+			<h1 class="vui-page-title">
 				{#if selectedDevice}
 					{selectedDevice.name}
 					<span class="text-sub text-sm" style="font-weight: normal; margin-left: 8px;">Device {selectedDevice.id}</span>

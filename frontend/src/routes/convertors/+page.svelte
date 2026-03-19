@@ -209,7 +209,7 @@
 <div class="page-root">
 	<div class="page-header">
 		<div class="header-left">
-			<h1 class="page-title">Convertors</h1>
+			<h1 class="vui-page-title">Convertors</h1>
 			<span class="text-sm text-sub">{convertors.length} convertor{convertors.length !== 1 ? 's' : ''} defined</span>
 		</div>
 		<div class="header-right">

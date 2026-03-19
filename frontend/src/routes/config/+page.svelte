@@ -103,7 +103,7 @@
 
 <div class="config-page">
 	<div class="page-header">
-		<h1>Configuration</h1>
+		<h1 class="vui-page-title">Configuration</h1>
 		{#if savedMsg}
 			<div class="vui-alert vui-alert-success vui-animate-fade-in" style="padding: 8px 16px; font-size: var(--vui-text-sm);">
 				{savedMsg}

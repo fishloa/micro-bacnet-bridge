@@ -56,7 +56,7 @@
 
 <div class="users-page">
 	<div class="page-header">
-		<h1>Users</h1>
+		<h1 class="vui-page-title">Users</h1>
 		<button class="vui-btn vui-btn-primary vui-btn-sm" onclick={() => showCreate = !showCreate}>
 			{showCreate ? 'Cancel' : '+ Add User'}
 		</button>

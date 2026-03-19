@@ -87,7 +87,7 @@
 <div class="points-panel">
 		<div class="panel-header">
 			<div>
-				<h2>BACnet Points</h2>
+				<h2 class="vui-page-title">Dashboard</h2>
 				<span class="text-sm text-sub">
 					{$filteredPoints.length} of {$points.length} objects
 				</span>
