@@ -7,6 +7,7 @@
 		connectSSE,
 	} from '$lib/api';
 	import type { BacnetPoint, BacnetDevice, PointConfig, Convertor, ProcessorDef } from '$lib/api';
+	import DeviceSidebar from '$lib/DeviceSidebar.svelte';
 
 	// ---------------------------------------------------------------------------
 	// State
@@ -273,36 +274,9 @@
 </script>
 
 <div class="page-root">
-	<!-- Device selector tabs -->
-	{#if devices.length > 1}
-		<div class="device-bar">
-			{#each devices as device (device.id)}
-				<button
-					class="device-tab vui-transition"
-					class:active={selectedDeviceId === device.id}
-					onclick={() => selectDevice(device.id)}
-				>
-					<span class="device-tab-status" class:online={device.online} class:offline={!device.online}></span>
-					<span class="device-tab-name">{device.name}</span>
-					<span class="device-tab-id">ID {device.id}</span>
-				</button>
-			{/each}
-		</div>
-	{/if}
-
 	<div class="page-header">
 		<div class="header-left">
-			<h1 class="vui-page-title">
-				{#if selectedDevice}
-					{selectedDevice.name}
-					<span class="text-sub text-sm" style="font-weight: normal; margin-left: 8px;">Device {selectedDevice.id}</span>
-				{:else}
-					Points Configuration
-				{/if}
-			</h1>
-			<span class="text-sm text-sub">
-				{allPoints.length} point{allPoints.length !== 1 ? 's' : ''} · {filteredRows.length} shown
-			</span>
+			<h1 class="vui-page-title">Points</h1>
 		</div>
 		<div class="header-right">
 			{#if saveStatus === 'success'}
@@ -328,6 +302,14 @@
 		</div>
 	</div>
 
+	<div class="points-body">
+	<DeviceSidebar
+		{devices}
+		{selectedDeviceId}
+		onSelect={selectDevice}
+	/>
+
+	<div class="points-content">
 	{#if loading}
 		<div class="loading-state">
 			<span class="text-sub">Loading points…</span>
@@ -471,72 +453,29 @@
 			</div>
 		</div>
 	{/if}
+	</div>
+	</div>
 </div>
 
 <style>
-	.device-bar {
-		display: flex;
-		gap: 4px;
-		overflow-x: auto;
-		flex-shrink: 0;
-		padding-bottom: 2px;
-	}
-
-	.device-tab {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 10px 16px;
-		border: 1px solid var(--vui-border);
-		border-radius: var(--vui-radius-md);
-		background: none;
-		color: var(--vui-text);
-		font-size: var(--vui-text-base);
-		cursor: pointer;
-		white-space: nowrap;
-	}
-
-	.device-tab:hover {
-		background: var(--vui-surface-hover);
-		color: var(--vui-text);
-	}
-
-	.device-tab.active {
-		background: var(--vui-accent-dim);
-		border-color: var(--vui-accent-border);
-		color: var(--vui-accent);
-	}
-
-	.device-tab-status {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		flex-shrink: 0;
-	}
-
-	.device-tab-status.online {
-		background: var(--vui-accent);
-		box-shadow: 0 0 4px var(--vui-accent-glow);
-	}
-
-	.device-tab-status.offline {
-		background: var(--vui-text-dim);
-	}
-
-	.device-tab-name { font-weight: var(--vui-font-medium); }
-
-	.device-tab-id {
-		font-size: var(--vui-text-xs);
-		color: var(--vui-text-muted);
-		font-family: var(--vui-font-mono, monospace);
-	}
-
 	.page-root {
 		display: flex;
 		flex-direction: column;
 		height: 100%;
 		overflow: hidden;
-		padding: var(--vui-space-lg);
+		padding: var(--vui-space-lg) var(--vui-space-lg) 0;
+	}
+	.points-body {
+		display: flex;
+		flex: 1;
+		overflow: hidden;
+		gap: var(--vui-space-md);
+	}
+	.points-content {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
 		gap: var(--vui-space-md);
 		box-sizing: border-box;
 	}

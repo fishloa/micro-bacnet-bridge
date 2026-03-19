@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import PointsPanel from '$lib/PointsPanel.svelte';
+	import DeviceSidebar from '$lib/DeviceSidebar.svelte';
 	import { api, connectSSE, pointKey } from '$lib/api';
 	import type { BacnetDevice, BacnetPoint } from '$lib/api';
 	import { points, deviceId } from '$lib/stores';
@@ -74,51 +75,35 @@
 	<title>BACnet Bridge</title>
 </svelte:head>
 
-<div class="dashboard">
-	<!-- Left sidebar: device list -->
-	<aside class="device-sidebar">
-		<!-- Device list -->
-		<button
-			class="device-item"
-			class:active={showAllDevices}
-			onclick={() => selectDevice(null)}
-		>
-			<span class="device-icon">⊞</span>
-			<span class="device-name">All Devices</span>
-		</button>
-
-		{#each devices as dev (dev.id)}
-			<button
-				class="device-item {deviceOnlineClass(dev)}"
-				class:active={selectedDeviceId === dev.id && !showAllDevices}
-				onclick={() => selectDevice(dev.id)}
-			>
-				<span class="device-status-dot" class:online={dev.online}></span>
-				<span class="device-info">
-					<span class="device-name">{dev.name}</span>
-					<span class="device-meta">
-						<span class="vui-badge vui-badge-info">ID {dev.id}</span>
-						{#if dev.mac}
-							<span class="vui-badge vui-badge-info">MAC {dev.mac}</span>
-						{/if}
-					</span>
-				</span>
-			</button>
-		{:else}
-			<div class="no-devices">No devices discovered</div>
-		{/each}
-	</aside>
+<div class="dashboard-page">
+	<h1 class="vui-page-title">Dashboard</h1>
+	<div class="dashboard-body">
+	<DeviceSidebar
+		{devices}
+		{selectedDeviceId}
+		showAllOption={true}
+		{showAllDevices}
+		onSelect={selectDevice}
+	/>
 
 	<!-- Right panel: points for selected device -->
 	<div class="points-area">
 		<PointsPanel showDeviceColumn={showAllDevices} />
 	</div>
+	</div>
 </div>
 
 <style>
-	.dashboard {
+	.dashboard-page {
 		display: flex;
+		flex-direction: column;
 		height: 100%;
+		overflow: hidden;
+		padding: var(--vui-space-lg) var(--vui-space-lg) 0;
+	}
+	.dashboard-body {
+		display: flex;
+		flex: 1;
 		overflow: hidden;
 	}
 

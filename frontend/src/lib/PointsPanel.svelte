@@ -86,12 +86,6 @@
 
 <div class="points-panel">
 		<div class="panel-header">
-			<div>
-				<h1 class="vui-page-title">Dashboard</h1>
-				<span class="text-sm text-sub">
-					{$filteredPoints.length} of {$points.length} objects
-				</span>
-			</div>
 		</div>
 
 		<div class="toolbar">
@@ -160,6 +154,9 @@
 				</tbody>
 			</table>
 		</div>
+		<div class="panel-footer">
+			<span class="text-sm text-sub">{$filteredPoints.length} of {$points.length} objects</span>
+		</div>
 </div>
 
 <style>
@@ -173,8 +170,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: var(--vui-space-md) var(--vui-space-lg);
-		border-bottom: 1px solid var(--vui-border);
+	}
+	.panel-footer {
+		padding: var(--vui-space-sm) var(--vui-space-lg);
+		border-top: 1px solid var(--vui-border);
 	}
 	.panel-header h2 {
 		font-size: var(--vui-text-lg);
