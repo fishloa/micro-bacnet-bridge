@@ -58,7 +58,11 @@ extern void     silence_timer_reset(void *pArg);
 #define MSTP_DEFAULT_MAC_ADDRESS    2u
 
 /** Default baud rate in bits per second. */
-#define MSTP_DEFAULT_BAUD_RATE      38400u
+/** Shared config written by Rust before Core 1 launch. */
+volatile mstp_config_t g_mstp_config;
+
+/** Shared status written by Core 1, read by Core 0. */
+volatile mstp_status_t g_mstp_status;
 
 /** Maximum master address to poll (0–127). */
 #define MSTP_DEFAULT_MAX_MASTER     127u
@@ -269,7 +273,17 @@ void core1_entry(void)
     /* -----------------------------------------------------------------------
      * Step 2: Initialise UART1 and RS-485 direction GPIO.
      * ---------------------------------------------------------------------- */
-    mstp_port_init(MSTP_DEFAULT_BAUD_RATE);
+    {
+        uint32_t baud = g_mstp_config.baud_rate;
+        if (baud == 0u) {
+            g_mstp_status.detecting = 1;
+            baud = mstp_port_auto_detect_baud();
+            g_mstp_status.detecting = 0;
+        }
+        mstp_port_init(baud);
+        g_mstp_status.active_baud = baud;
+        g_mstp_status.parity = 0; /* 8N1 always */
+    }
 
     /* -----------------------------------------------------------------------
      * Step 3: Populate MS/TP port struct fields.
@@ -304,11 +318,30 @@ void core1_entry(void)
     /* -----------------------------------------------------------------------
      * Step 5: Polling loop — runs forever on Core 1.
      * ---------------------------------------------------------------------- */
+
+    /* Track whether auto-detect mode is active (baud_rate == 0 in config). */
+    uint8_t auto_detect_mode = (g_mstp_config.baud_rate == 0u);
+    /* Timestamp of last valid MS/TP frame — for re-scan trigger. */
+    uint32_t last_frame_us = mstp_port_timer_us();
+
     for (;;) {
-        /* Increment the watchdog heartbeat counter (C2).
-         * Core 0 monitors this; if it stops incrementing for > 200 ms,
-         * Core 0 will trigger a hardware watchdog reset. */
+        /* Increment the watchdog heartbeat counter (C2). */
         core1_heartbeat++;
+
+        /* In auto-detect mode, re-scan if bus has been silent for 10 seconds. */
+        if (auto_detect_mode && !g_mstp_status.bus_active) {
+            uint32_t elapsed = mstp_port_timer_us() - last_frame_us;
+            if (elapsed > 10000000u) { /* 10 seconds */
+                g_mstp_status.detecting = 1;
+                uint32_t new_baud = mstp_port_auto_detect_baud();
+                g_mstp_status.detecting = 0;
+                if (new_baud != g_mstp_status.active_baud) {
+                    mstp_port_init(new_baud);
+                    g_mstp_status.active_baud = new_baud;
+                }
+                last_frame_us = mstp_port_timer_us();
+            }
+        }
 
         /* Advance the MS/TP receive and master-node state machines. */
         mstp_poll();

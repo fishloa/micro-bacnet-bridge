@@ -43,6 +43,16 @@ export interface BacnetConfig {
 	bacnetIpEnabled: boolean;
 }
 
+export interface SerialStatus {
+	baud: number;
+	parity: string;
+	framesRx: number;
+	framesTx: number;
+	errorsRx: number;
+	busActive: boolean;
+	detecting: boolean;
+}
+
 export interface SystemStatus {
 	uptime: number;
 	ip: string;
@@ -53,6 +63,7 @@ export interface SystemStatus {
 	mstpFramesSent: number;
 	mstpFramesRecv: number;
 	devicesDiscovered: number;
+	serial?: SerialStatus;
 }
 
 export interface User {
@@ -302,7 +313,7 @@ const MOCK_BACNET_CONFIG: BacnetConfig = {
 	deviceName: 'BACnet Bridge',
 	vendor: 'Icomb Place',
 	mstpMac: 1,
-	mstpBaud: 76800,
+	mstpBaud: 0,
 	maxMaster: 127,
 	bacnetIpEnabled: true,
 };
@@ -593,7 +604,10 @@ export function isNumericType(objectType: string): boolean {
 // SSE client for live point value updates.
 // SSE event data format: {"deviceId":<n>,"objType":<n>,"instance":<n>,"value":<v>}
 // The update map key is `{deviceId}:{objectType}:{objectInstance}`.
-export function connectSSE(onUpdate: (updates: Record<string, string | number | boolean>) => void): () => void {
+export function connectSSE(
+	onUpdate: (updates: Record<string, string | number | boolean>) => void,
+	onSerial?: (status: SerialStatus) => void,
+): () => void {
 	const url = '/api/events';
 	let es: EventSource | null = null;
 	let retryTimer: ReturnType<typeof setTimeout> | null = null;
@@ -605,6 +619,13 @@ export function connectSSE(onUpdate: (updates: Record<string, string | number | 
 				onUpdate(JSON.parse(event.data));
 			} catch { /* ignore malformed */ }
 		};
+		if (onSerial) {
+			es.addEventListener('serial', (event) => {
+				try {
+					onSerial(JSON.parse((event as MessageEvent).data));
+				} catch { /* ignore malformed */ }
+			});
+		}
 		es.onerror = () => {
 			es?.close();
 			retryTimer = setTimeout(connect, 3000);

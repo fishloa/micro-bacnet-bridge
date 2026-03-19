@@ -110,7 +110,7 @@ fn default_mstp_mac() -> u8 {
     1
 }
 fn default_mstp_baud() -> u32 {
-    76_800
+    0 // 0 = auto-detect
 }
 fn default_max_master() -> u8 {
     127
@@ -122,7 +122,7 @@ impl Default for BacnetDeviceConfig {
             device_id: 389_999,
             device_name: default_device_name(),
             mstp_mac: 1,
-            mstp_baud: 76_800,
+            mstp_baud: 0, // 0 = auto-detect
             max_master: 127,
         }
     }
@@ -609,8 +609,8 @@ impl Default for BridgeConfig {
     }
 }
 
-/// Valid MS/TP baud rates (per BACnet clause 9.3).
-const VALID_BAUD_RATES: [u32; 4] = [9600, 19200, 38400, 76800];
+/// Valid MS/TP baud rates (per BACnet clause 9.3). 0 = auto-detect.
+const VALID_BAUD_RATES: [u32; 5] = [0, 9600, 19200, 38400, 76800];
 
 /// Maximum BACnet device instance number (22-bit field, ASHRAE 135 clause 12.11).
 pub const DEVICE_ID_MAX: u32 = 0x003F_FFFE;
@@ -622,7 +622,7 @@ impl BridgeConfig {
     /// - `magic` == `MAGIC`
     /// - `version` == `CONFIG_VERSION`
     /// - `bacnet.mstp_mac` <= 127
-    /// - `bacnet.mstp_baud` is one of {9600, 19200, 38400, 76800}
+    /// - `bacnet.mstp_baud` is one of {0 (auto), 9600, 19200, 38400, 76800}
     /// - `bacnet.device_id` <= 0x003F_FFFE (22-bit BACnet instance max)
     /// - `bacnet.max_master` >= 1 && <= 127
     /// - `hostname` is non-empty
@@ -733,7 +733,7 @@ mod tests {
     fn default_bacnet_device_id() {
         let cfg = BridgeConfig::default();
         assert_eq!(cfg.bacnet.device_id, 389_999);
-        assert_eq!(cfg.bacnet.mstp_baud, 76_800);
+        assert_eq!(cfg.bacnet.mstp_baud, 0); // auto-detect
         assert_eq!(cfg.bacnet.mstp_mac, 1);
         assert_eq!(cfg.bacnet.max_master, 127);
     }

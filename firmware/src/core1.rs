@@ -40,21 +40,73 @@ pub static core1_heartbeat: AtomicU32 = AtomicU32::new(0);
 /// Stack allocated for Core 1. 8 KB is sufficient for the C MS/TP state machine.
 static mut CORE1_STACK: Stack<8192> = Stack::new();
 
+/// MS/TP config struct matching `mstp_config_t` in `bacnet_bridge.h`.
+#[repr(C)]
+struct MstpConfig {
+    baud_rate: u32,
+    mac_address: u8,
+    max_master: u8,
+    _pad: [u8; 2],
+}
+
+/// MS/TP status struct matching `mstp_status_t` in `bacnet_bridge.h`.
+#[repr(C)]
+pub struct MstpStatus {
+    pub active_baud: u32,
+    pub frames_rx: u32,
+    pub frames_tx: u32,
+    pub errors_rx: u32,
+    pub bus_active: u8,
+    pub detecting: u8,
+    pub parity: u8,
+    _pad: u8,
+}
+
 extern "C" {
     /// Entry point implemented in `csrc/core1_entry.c`.
     /// Called from Core 1; never returns.
     fn core1_entry() -> !;
+
+    /// Shared config struct read by Core 1 at startup.
+    static mut g_mstp_config: MstpConfig;
+
+    /// Shared status struct written by Core 1.
+    static g_mstp_status: MstpStatus;
+}
+
+/// Read the current MS/TP serial port status from Core 1.
+pub fn mstp_status() -> (u32, u32, u32, u32, bool, bool) {
+    // SAFETY: g_mstp_status is written only by Core 1, read-only from Core 0.
+    // Individual u32 reads are atomic on Cortex-M33.
+    unsafe {
+        let s = &*core::ptr::addr_of!(g_mstp_status);
+        (
+            s.active_baud,
+            s.frames_rx,
+            s.frames_tx,
+            s.errors_rx,
+            s.bus_active != 0,
+            s.detecting != 0,
+        )
+    }
 }
 
 /// Launch Core 1, which runs the C MS/TP master state machine.
 ///
+/// Writes the MS/TP configuration to `g_mstp_config` before launching Core 1,
+/// so the C code can read the baud rate, MAC address, and max master values.
+///
 /// Must be called exactly once during startup, before any IPC ring buffer
 /// access from Core 1.
-pub fn launch_core1(core1: embassy_rp::Peri<'static, CORE1>) {
-    // SAFETY: CORE1_STACK is only written here (once, before Core 1 runs).
+pub fn launch_core1(core1: embassy_rp::Peri<'static, CORE1>, baud: u32, mac: u8, max_master: u8) {
+    // Write config before Core 1 starts.
+    unsafe {
+        let cfg = &mut *core::ptr::addr_of_mut!(g_mstp_config);
+        cfg.baud_rate = baud;
+        cfg.mac_address = mac;
+        cfg.max_master = max_master;
+    }
+
     let stack = unsafe { &mut *core::ptr::addr_of_mut!(CORE1_STACK) };
-    spawn_core1(core1, stack, move || {
-        // SAFETY: core1_entry() is implemented in C and never returns.
-        unsafe { core1_entry() }
-    });
+    spawn_core1(core1, stack, move || unsafe { core1_entry() });
 }

@@ -16,7 +16,7 @@
 		dhcp: true, ip: '', subnet: '', gateway: '', dns: '', hostname: ''
 	});
 	let bacnet: BacnetConfig = $state({
-		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 9600, maxMaster: 127, bacnetIpEnabled: true
+		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 0, maxMaster: 127, bacnetIpEnabled: true
 	});
 	let ntp: NtpConfig = $state({
 		enabled: true, use_dhcp_servers: true, servers: ['pool.ntp.org', '', ''], sync_interval_secs: 3600
@@ -187,6 +187,7 @@
 						<td class="field-label">MS/TP Baud Rate</td>
 						<td>
 							<select class="vui-input" bind:value={bacnet.mstpBaud}>
+								<option value={0}>Auto-detect</option>
 								<option value={9600}>9600</option>
 								<option value={19200}>19200</option>
 								<option value={38400}>38400</option>

@@ -162,7 +162,23 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
             }
         }
 
-        // Send a keep-alive comment every cycle
+        // Send serial status every cycle
+        {
+            let (baud, frx, ftx, erx, active, detecting) = crate::core1::mstp_status();
+            let mut sbuf: heapless::String<192> = heapless::String::new();
+            let _ = core::fmt::write(
+                &mut sbuf,
+                format_args!(
+                    "event: serial\ndata: {{\"baud\":{},\"parity\":\"8N1\",\"framesRx\":{},\"framesTx\":{},\"errorsRx\":{},\"busActive\":{},\"detecting\":{}}}\n\n",
+                    baud, frx, ftx, erx, active, detecting,
+                ),
+            );
+            if socket.write_all(sbuf.as_bytes()).await.is_err() {
+                return;
+            }
+        }
+
+        // Send a keep-alive comment if no point events
         if events.is_empty() {
             if socket.write_all(b": ping\n\n").await.is_err() {
                 return;

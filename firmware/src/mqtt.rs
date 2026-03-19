@@ -91,13 +91,24 @@ pub async fn mqtt_task(stack: Stack<'static>) {
     stack.wait_config_up().await;
     info!("mqtt: network up");
 
-    info!("mqtt: network ready, starting MQTT client");
-
-    // Read TLS flag from config (false by default if config not yet set)
-    let tls_enabled = {
+    // Check if MQTT is enabled in config
+    let (enabled, tls_enabled) = {
         let cfg = crate::http::CONFIG.lock().await;
-        cfg.as_ref().map(|c| c.mqtt.tls_enabled).unwrap_or(false)
+        match cfg.as_ref() {
+            Some(c) => (c.mqtt.enabled, c.mqtt.tls_enabled),
+            None => (false, false),
+        }
     };
+
+    if !enabled {
+        info!("mqtt: disabled in config, task idle");
+        // Sleep forever — don't burn CPU or make DNS queries
+        loop {
+            Timer::after(embassy_time::Duration::from_secs(3600)).await;
+        }
+    }
+
+    info!("mqtt: network ready, starting MQTT client");
 
     loop {
         // Resolve broker IP

@@ -5,32 +5,14 @@
 //! and version field provide validity detection; if the magic is absent the
 //! default config is returned.
 
+use crate::platform::{CONFIG_OFFSET, CONFIG_SIZE, FLASH_SIZE, IDENTITY_OFFSET, SECTOR_SIZE};
 use bridge_core::config::BridgeConfig;
 use defmt::{error, info, warn};
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH;
 
-/// Total flash size — 4 MiB on Pico 2 (W5500-EVB-Pico-PoE with RP2350).
-pub const FLASH_SIZE: usize = 4 * 1024 * 1024;
-
-/// Size of one flash sector (erase granularity).
-const SECTOR_SIZE: usize = 4096;
-
-/// Size of the config region (32 KiB = 8 contiguous 4 KiB sectors).
-/// A 32 KiB window gives headroom for the expanded v4 config (users × 8,
-/// tokens × 16, points × 256).
-const CONFIG_SIZE: usize = 32 * 1024;
-
-/// Byte offset from start-of-flash where config is stored.
-/// Placed in the 64 KiB "config partition" at the top of flash.
-/// 0x003F_0000 = FLASH_SIZE − 64 KiB.
-const CONFIG_OFFSET: u32 = (FLASH_SIZE - 64 * 1024) as u32; // 0x003F_0000
-
-/// Identity sector: one 4 KiB sector at the very top of flash.
-/// Stores the locally-administered MAC address and survives all config/OTA writes.
-/// Layout: [magic: 4 bytes] [mac: 6 bytes] [padding: rest]
-const IDENTITY_OFFSET: u32 = (FLASH_SIZE - 4 * 1024) as u32; // 0x003F_C000
-const IDENTITY_MAGIC: [u8; 4] = [0x49, 0x44, 0x4E, 0x54]; // "IDNT"
+/// Identity sector magic bytes: "IDNT".
+const IDENTITY_MAGIC: [u8; 4] = [0x49, 0x44, 0x4E, 0x54];
 
 /// Scratch buffer for JSON encode/decode.
 /// 8 KiB is enough for the expanded v4 config including all point rules.
@@ -196,16 +178,11 @@ impl ConfigManager {
     /// and violating MS/TP timing (one bit at 76800 baud = 13 µs; a flash sector
     /// erase takes ~50 ms).
     ///
-    /// TODO: Move Core 1 main loop to .time_critical SRAM section — mark
-    ///       `core1_entry`, `mstp_poll`, and `mstp_transmit_outbound` with
-    ///       `__attribute__((section(".time_critical")))` in core1_entry.c
-    ///       (partially done; verify linker script places .time_critical in SRAM).
-    /// TODO: Signal Core 1 to enter an SRAM-only pause loop before calling
-    ///       `blocking_erase` / `blocking_write` here, then release it after.
-    ///       Use a shared atomic flag (e.g. in the IPC control struct) that
-    ///       Core 1 polls between MS/TP frames.
     #[allow(dead_code)]
     pub fn save(&mut self, config: &BridgeConfig) {
+        // embassy-rp's flash.blocking_erase() calls multicore::pause_core1() internally,
+        // so no manual Core 1 pause is needed here.
+
         let mut json_buf = [0u8; JSON_BUF_SIZE];
         let json_len = match serde_json_core::to_slice(config, &mut json_buf) {
             Ok(n) => n,

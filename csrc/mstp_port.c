@@ -25,26 +25,7 @@
 #include <stdbool.h>
 
 #include "bacnet_bridge.h"
-
-/* --------------------------------------------------------------------------
- * RP2350A peripheral base addresses
- * (RP2350A datasheet §2.4, §4.2)
- * -------------------------------------------------------------------------- */
-
-/** UART1 register base address. */
-#define UART1_BASE          0x40038000u
-
-/** IO_BANK0 register base address (GPIO pad/function select). */
-#define IO_BANK0_BASE       0x40014000u
-
-/** SIO register base address (single-cycle I/O, GPIO control). */
-#define SIO_BASE            0xD0000000u
-
-/** Timer register base address (alarm/raw counter). */
-#define TIMER_BASE          0x40054000u
-
-/** Resets register base address (peripheral reset control). */
-#define RESETS_BASE         0x4000C000u
+#include "platform_rp2350.h"
 
 /* --------------------------------------------------------------------------
  * UART1 register offsets
@@ -148,13 +129,6 @@
 #define GPIO_UART1_RX   5u   /**< UART1 RXD. */
 
 /* --------------------------------------------------------------------------
- * Clock constants
- * -------------------------------------------------------------------------- */
-
-/** RP2350A system clock frequency in Hz (configured at 133 MHz in embassy-rp). */
-#define SYS_CLK_HZ  133000000u
-
-/* --------------------------------------------------------------------------
  * Register access macro
  * -------------------------------------------------------------------------- */
 
@@ -193,6 +167,7 @@ volatile bool g_uart_rx_error = false;
  * @param baud_rate  Desired baud rate in bits per second.
  *                   Supported values: 9600, 19200, 38400, 76800.
  */
+__attribute__((section(".time_critical")))
 void mstp_port_init(uint32_t baud_rate)
 {
     uint32_t brd;
@@ -283,6 +258,55 @@ void mstp_port_init(uint32_t baud_rate)
 
     /* Default to receive mode. */
     mstp_port_set_direction(false);
+}
+
+/* --------------------------------------------------------------------------
+ * mstp_port_auto_detect_baud — scan for valid MS/TP frames
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Auto-detect MS/TP baud rate by listening for valid preamble bytes.
+ *
+ * Tries each standard baud rate (9600, 19200, 38400, 76800) in order.
+ * At each rate, listens for up to ~2 seconds for the MS/TP preamble
+ * sequence 0x55 0xFF.  If found, returns that baud rate.
+ * If no valid traffic is detected at any rate, returns 19200 as a safe default.
+ *
+ * @return Detected baud rate, or 19200 if no traffic found.
+ */
+__attribute__((section(".time_critical")))
+uint32_t mstp_port_auto_detect_baud(void)
+{
+    static const uint32_t rates[] = { 19200u, 9600u, 38400u, 76800u };
+    static const uint32_t num_rates = sizeof(rates) / sizeof(rates[0]);
+
+    for (uint32_t r = 0; r < num_rates; r++) {
+        mstp_port_init(rates[r]);
+
+        /* Listen for ~2 seconds worth of timer ticks.
+         * At 133 MHz, TIMER counts at 1 MHz (1 µs per tick). */
+        uint32_t start = mstp_port_timer_us();
+        bool got_55 = false;
+
+        while ((mstp_port_timer_us() - start) < 2000000u) {
+            if (!mstp_port_byte_available()) {
+                continue;
+            }
+            uint8_t byte = mstp_port_get_byte();
+
+            if (byte == 0x55u) {
+                got_55 = true;
+            } else if (got_55 && byte == 0xFFu) {
+                /* Valid MS/TP preamble found at this baud rate. */
+                return rates[r];
+            } else {
+                got_55 = false;
+            }
+        }
+    }
+
+    /* No traffic detected — return safe default. */
+    return 19200u;
 }
 
 /* --------------------------------------------------------------------------

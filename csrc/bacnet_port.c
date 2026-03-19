@@ -23,6 +23,7 @@
 #include <stdbool.h>
 
 #include "bacnet_bridge.h"
+#include "platform_rp2350.h"
 
 /*
  * TODO(phase-4): When bacnet-stack headers are available via the include path
@@ -35,15 +36,12 @@
  */
 
 /* --------------------------------------------------------------------------
- * RP2350A UART1 register access (duplicated subset from mstp_port.c)
+ * RP2350A UART1 register access
  *
- * These are the minimal definitions needed by RS485_Send_Frame to poll the
- * UART flag register before de-asserting the RS-485 driver-enable pin (C4).
- * Keep in sync with mstp_port.c.
+ * Base address comes from platform_rp2350.h.
+ * Only the offsets and bit masks specific to this file are defined here.
  * -------------------------------------------------------------------------- */
 
-/** UART1 register base address. */
-#define UART1_BASE      0x40038000u
 /** UART flag register offset. */
 #define UART_FR_OFFSET  0x018u
 /** UART busy bit: set while the UART shift register is transmitting. */

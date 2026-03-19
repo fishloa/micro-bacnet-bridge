@@ -35,7 +35,7 @@
 //! flag, then release it after the write is done.  This is tracked in the
 //! same TODO block as `config::ConfigManager::save`.
 
-use crate::config::FLASH_SIZE;
+use crate::platform::{FIRMWARE_OFFSET, FLASH_SIZE, PROTECTED_OFFSET, SECTOR_SIZE};
 use bridge_core::ota::{
     is_uf2, parse_uf2_block, validate_firmware_image, MAX_FIRMWARE_SIZE, UF2_BLOCK_SIZE,
 };
@@ -53,18 +53,8 @@ use picoserve::io::Read as PicoRead;
 // Constants
 // ---------------------------------------------------------------------------
 
-/// Byte offset in flash where firmware starts (after the 256-byte boot2 stage).
-const FIRMWARE_OFFSET: u32 = 0x100;
-
-/// Size of one flash erase sector (4 KB on RP2040 / RP2350).
-const SECTOR_SIZE: usize = 4096;
-
-/// Last flash sector is reserved for config — do not overwrite it.
-/// Last two flash sectors are reserved (identity + config). OTA must not touch them.
-const PROTECTED_OFFSET: u32 = (FLASH_SIZE - 2 * SECTOR_SIZE) as u32;
-
-/// Number of flash sectors available for firmware (everything between boot2
-/// and the config sector, inclusive of the first sector that contains boot2).
+/// Number of flash sectors available for firmware (everything between
+/// FIRMWARE_OFFSET and PROTECTED_OFFSET).
 /// We write from `FIRMWARE_OFFSET` up to `PROTECTED_OFFSET - 1`.
 const MAX_IMAGE_SECTORS: usize =
     (PROTECTED_OFFSET as usize - FIRMWARE_OFFSET as usize) / SECTOR_SIZE;
@@ -113,6 +103,9 @@ pub async fn handle_firmware_stream<R: PicoRead>(
     let mut first_sector = true;
 
     let num_sectors = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE;
+
+    // embassy-rp's flash.blocking_erase() calls multicore::pause_core1() internally,
+    // so no manual Core 1 pause is needed here.
 
     for sector_idx in 0..num_sectors {
         let sector_start = sector_idx * SECTOR_SIZE;
@@ -265,6 +258,9 @@ pub async fn handle_firmware_upload(
 
     // We iterate one full sector at a time.
     let num_sectors = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE;
+
+    // embassy-rp's flash.blocking_erase() calls multicore::pause_core1() internally,
+    // so no manual Core 1 pause is needed here.
 
     for sector_idx in 0..num_sectors {
         let sector_start = sector_idx * SECTOR_SIZE;

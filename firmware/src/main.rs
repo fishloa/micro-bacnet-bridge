@@ -26,6 +26,7 @@ mod mdns;
 mod mqtt;
 mod ntp;
 mod ota;
+mod platform;
 mod snmp;
 mod syslog;
 mod web_assets;
@@ -34,12 +35,18 @@ use defmt::info;
 use embassy_executor::Spawner;
 use embassy_net::{Config as NetConfig, Stack, StackResources};
 use embassy_net_wiznet::chip::W5500;
+use embassy_rp::bind_interrupts;
 use embassy_rp::gpio::{Level, Output};
 use embassy_rp::spi::{Config as SpiConfig, Spi};
+use embassy_rp::trng::Trng;
 use embassy_time::Timer;
 use embedded_hal_bus::spi::ExclusiveDevice;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
+
+bind_interrupts!(struct TrngIrqs {
+    TRNG_IRQ => embassy_rp::trng::InterruptHandler<embassy_rp::peripherals::TRNG>;
+});
 
 // ---------------------------------------------------------------------------
 // Static allocations for embassy-net stack resources
@@ -69,20 +76,23 @@ async fn main(spawner: Spawner) {
     // ---- GPIO: LED heartbeat ----
     let mut led = Output::new(p.PIN_25, Level::Low);
 
+    // ---- Hardware TRNG (RP2350) ----
+    let mut trng = Trng::new(p.TRNG, TrngIrqs, embassy_rp::trng::Config::default());
+
     // ---- Flash + config (before W5500, we need the MAC address) ----
     let flash =
-        embassy_rp::flash::Flash::<_, embassy_rp::flash::Async, { config::FLASH_SIZE }>::new(
+        embassy_rp::flash::Flash::<_, embassy_rp::flash::Async, { platform::FLASH_SIZE }>::new(
             p.FLASH, p.DMA_CH2,
         );
     let mut cfg_mgr = config::ConfigManager::new(flash);
     let mut bridge_config = cfg_mgr.load();
 
     // MAC address: stored in a dedicated identity flash sector that survives
-    // all reflashes (OTA and BOOTSEL). Generated from ROSC on first boot.
+    // all reflashes (OTA and BOOTSEL). Generated from TRNG on first boot.
     let mac_addr = match cfg_mgr.load_mac() {
         Some(mac) if mac[1..] != [0, 0, 0, 0, 0] => mac,
         _ => {
-            let seed = rosc_random_seed();
+            let seed = trng.blocking_next_u64();
             let mac = [
                 0x02, // locally administered, unicast
                 (seed >> 8) as u8,
@@ -206,8 +216,8 @@ async fn main(spawner: Spawner) {
         })
     };
 
-    // Generate a random seed from the ROSC frequency counter
-    let random_seed = rosc_random_seed();
+    // Generate a random seed from the hardware TRNG for the network stack
+    let random_seed = trng.blocking_next_u64();
 
     // STACK_RESOURCES.init() returns &'static mut StackResources, so the
     // Stack and Runner returned by embassy_net::new() are already Stack<'static>
@@ -225,7 +235,12 @@ async fn main(spawner: Spawner) {
     spawner.spawn(mqtt::mqtt_task(stack)).unwrap();
 
     // ---- Core 1: MS/TP master (C) ----
-    core1::launch_core1(p.CORE1);
+    core1::launch_core1(
+        p.CORE1,
+        bridge_config.bacnet.mstp_baud,
+        bridge_config.bacnet.mstp_mac,
+        bridge_config.bacnet.max_master,
+    );
 
     // ---- LED heartbeat ----
     info!("startup complete; heartbeat running");
@@ -269,55 +284,31 @@ async fn net_task(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Derive a random u64 seed from the RP2350 hardware TRNG.
-///
-/// The RP2350 has a dedicated hardware TRNG (Arm TrustZone RNG IP).
-/// Reading RNG_DATA yields 32 bits of entropy per read.
-///
-/// This is not cryptographically strong but provides enough entropy for
-/// the network stack's ephemeral port selection.
-fn rosc_random_seed() -> u64 {
-    // ROSC RANDOMBIT register — works without any peripheral setup.
-    // RP2350: ROSC base = 0x400E_8000, RANDOMBIT offset = 0x20.
-    const ROSC_RANDOMBIT: *const u32 = 0x400E_8020 as *const u32;
-
-    let mut val: u64 = 0;
-    for _ in 0..64 {
-        // Small delay between reads to let the ROSC jitter accumulate
-        cortex_m::asm::nop();
-        cortex_m::asm::nop();
-        cortex_m::asm::nop();
-        cortex_m::asm::nop();
-        val = (val << 1) | (unsafe { core::ptr::read_volatile(ROSC_RANDOMBIT) } & 1) as u64;
-    }
-    // Mix — fold top and bottom with XOR to reduce bias
-    val ^ val.rotate_right(17)
-}
-
 /// Convert a subnet mask (e.g. [255,255,255,0]) to a CIDR prefix length.
 fn subnet_mask_to_prefix(mask: [u8; 4]) -> u8 {
     let raw = u32::from_be_bytes(mask);
     raw.leading_ones() as u8
 }
 
-/// Trigger a full system reset via the RP2350A watchdog.
-/// Unlike `SCB::sys_reset()`, this resets ALL peripherals (SPI, GPIO, etc.)
-/// so the W5500 comes up clean on reboot.
+/// Trigger a full system reset via the RP2350A hardware watchdog.
+///
+/// Uses `embassy_rp::watchdog::Watchdog::trigger_reset()` which configures
+/// the PSM WDSEL register and triggers an immediate watchdog reset, resetting
+/// all peripherals (SPI, GPIO, etc.) so the W5500 comes up clean on reboot.
+///
+/// Falls back to `cortex_m::peripheral::SCB::sys_reset()` if the watchdog
+/// peripheral is unavailable for any reason.
 pub fn system_reset() -> ! {
-    // PSM (Power-on State Machine) WDSEL register: enable watchdog reset for
-    // all subsystems. Address: 0x40010000 + 0x04 (WDSEL).
-    const PSM_BASE: u32 = 0x4001_0000;
-    const PSM_WDSEL: *mut u32 = (PSM_BASE + 0x04) as *mut u32;
-    // Enable all reset sources
-    unsafe { core::ptr::write_volatile(PSM_WDSEL, 0x0001_FFFF) };
+    // SAFETY: We are triggering a reset — the device is about to restart and
+    // there is no safe time to use a peripheral handle. Stealing the WATCHDOG
+    // peripheral here is intentional: it is only used to trigger an immediate
+    // hardware reset and is never returned to the executor.
+    let mut wd =
+        embassy_rp::watchdog::Watchdog::new(unsafe { embassy_rp::peripherals::WATCHDOG::steal() });
+    wd.trigger_reset();
 
-    // Watchdog: CTRL register at 0x40058000.
-    const WATCHDOG_BASE: u32 = 0x4005_8000;
-    const WATCHDOG_CTRL: *mut u32 = (WATCHDOG_BASE + 0x00) as *mut u32;
-    // Set trigger bit (bit 31) to force immediate reset
-    unsafe { core::ptr::write_volatile(WATCHDOG_CTRL, 1 << 31) };
-
-    // Should never reach here
+    // Should never reach here — trigger_reset() enables the watchdog and sets
+    // the trigger bit which causes an immediate reset.
     loop {
         cortex_m::asm::wfi();
     }

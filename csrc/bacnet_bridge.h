@@ -38,6 +38,57 @@ extern "C" {
 #define BACNET_VENDOR_NAME "Icomb Place"
 
 /* --------------------------------------------------------------------------
+ * Shared Core 1 configuration (written by Rust before Core 1 launch)
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief MS/TP configuration passed from Core 0 (Rust) to Core 1 (C).
+ *
+ * Rust writes this struct before calling spawn_core1().  Core 1 reads it
+ * once at startup in core1_entry().
+ */
+typedef struct {
+    /** Baud rate: 9600, 19200, 38400, 76800, or 0 = auto-detect. */
+    uint32_t baud_rate;
+    /** MS/TP MAC address (0–127). */
+    uint8_t mac_address;
+    /** Max master (1–127). */
+    uint8_t max_master;
+    /** Padding for alignment. */
+    uint8_t _pad[2];
+} mstp_config_t;
+
+/** Global config struct — written by Rust, read by Core 1. */
+extern volatile mstp_config_t g_mstp_config;
+
+/**
+ * @brief MS/TP serial port status (written by Core 1, read by Core 0).
+ *
+ * Core 0 reads this for the dashboard SSE stream and config page.
+ * All fields are volatile — Core 1 is the sole writer.
+ */
+typedef struct {
+    /** Active baud rate (after auto-detect or manual config). 0 = not yet determined. */
+    uint32_t active_baud;
+    /** Total valid MS/TP frames received. */
+    uint32_t frames_rx;
+    /** Total MS/TP frames transmitted. */
+    uint32_t frames_tx;
+    /** Total receive errors (framing, CRC, overrun). */
+    uint32_t errors_rx;
+    /** true if valid MS/TP traffic has been seen recently (within last 5s). */
+    uint8_t bus_active;
+    /** true if auto-detect is in progress. */
+    uint8_t detecting;
+    /** Parity setting: 0=none, 1=even, 2=odd. Always 0 (8N1) for MS/TP. */
+    uint8_t parity;
+    uint8_t _pad;
+} mstp_status_t;
+
+/** Global status struct — written by Core 1, read by Core 0 via SSE/API. */
+extern volatile mstp_status_t g_mstp_status;
+
+/* --------------------------------------------------------------------------
  * IPC PDU type tags
  * -------------------------------------------------------------------------- */
 
@@ -210,6 +261,13 @@ extern volatile bool g_uart_rx_error;
  * @param baud_rate  Desired baud rate (9600, 19200, 38400, or 76800).
  */
 void mstp_port_init(uint32_t baud_rate);
+
+/**
+ * @brief Auto-detect MS/TP baud rate by listening for valid preamble bytes.
+ * Tries 19200, 9600, 38400, 76800 in order, ~2s per rate.
+ * @return Detected baud rate, or 19200 if no traffic found.
+ */
+uint32_t mstp_port_auto_detect_baud(void);
 
 /**
  * @brief Assert or de-assert the RS-485 driver-enable pin (GPIO3).

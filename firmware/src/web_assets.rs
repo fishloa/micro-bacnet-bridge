@@ -23,8 +23,8 @@ pub fn get_asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "_app/immutable/assets/11.CtZRhhKy.css" => {
             Some((_APP_IMMUTABLE_ASSETS_11_CTZRHHKY_CSS, "text/css"))
         }
-        "_app/immutable/assets/2.B8ZDGYoE.css" => {
-            Some((_APP_IMMUTABLE_ASSETS_2_B8ZDGYOE_CSS, "text/css"))
+        "_app/immutable/assets/2.VT7GzHJ_.css" => {
+            Some((_APP_IMMUTABLE_ASSETS_2_VT7GZHJ__CSS, "text/css"))
         }
         "_app/immutable/assets/3.BDQ5X82w.css" => {
             Some((_APP_IMMUTABLE_ASSETS_3_BDQ5X82W_CSS, "text/css"))
@@ -59,14 +59,14 @@ pub fn get_asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "_app/immutable/chunks/B9cBbv2E.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_B9CBBV2E_JS, "application/javascript"))
         }
+        "_app/immutable/chunks/BGesMc_X.js" => {
+            Some((_APP_IMMUTABLE_CHUNKS_BGESMC_X_JS, "application/javascript"))
+        }
         "_app/immutable/chunks/BLTvsoaZ.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_BLTVSOAZ_JS, "application/javascript"))
         }
         "_app/immutable/chunks/BR4gNsfd.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_BR4GNSFD_JS, "application/javascript"))
-        }
-        "_app/immutable/chunks/BY_fQ5lC.js" => {
-            Some((_APP_IMMUTABLE_CHUNKS_BY_FQ5LC_JS, "application/javascript"))
         }
         "_app/immutable/chunks/Bhx9EHw4.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_BHX9EHW4_JS, "application/javascript"))
@@ -74,20 +74,17 @@ pub fn get_asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "_app/immutable/chunks/Bq6RWp7w.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_BQ6RWP7W_JS, "application/javascript"))
         }
-        "_app/immutable/chunks/BxqCJcm4.js" => {
-            Some((_APP_IMMUTABLE_CHUNKS_BXQCJCM4_JS, "application/javascript"))
-        }
         "_app/immutable/chunks/C4fKE_4a.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_C4FKE_4A_JS, "application/javascript"))
+        }
+        "_app/immutable/chunks/C71HuKAt.js" => {
+            Some((_APP_IMMUTABLE_CHUNKS_C71HUKAT_JS, "application/javascript"))
         }
         "_app/immutable/chunks/CVKhMu0o.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_CVKHMU0O_JS, "application/javascript"))
         }
         "_app/immutable/chunks/Cl2hF-2Z.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_CL2HF_2Z_JS, "application/javascript"))
-        }
-        "_app/immutable/chunks/CoiJ8EIT.js" => {
-            Some((_APP_IMMUTABLE_CHUNKS_COIJ8EIT_JS, "application/javascript"))
         }
         "_app/immutable/chunks/DINAOACm.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_DINAOACM_JS, "application/javascript"))
@@ -98,57 +95,60 @@ pub fn get_asset(path: &str) -> Option<(&'static [u8], &'static str)> {
         "_app/immutable/chunks/DbjJ7nwO.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_DBJJ7NWO_JS, "application/javascript"))
         }
+        "_app/immutable/chunks/Dbos3XuT.js" => {
+            Some((_APP_IMMUTABLE_CHUNKS_DBOS3XUT_JS, "application/javascript"))
+        }
         "_app/immutable/chunks/fy2BZYY_.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_FY2BZYY__JS, "application/javascript"))
         }
         "_app/immutable/chunks/g8d1vrjc.js" => {
             Some((_APP_IMMUTABLE_CHUNKS_G8D1VRJC_JS, "application/javascript"))
         }
-        "_app/immutable/entry/app.CwwyGhDB.js" => Some((
-            _APP_IMMUTABLE_ENTRY_APP_CWWYGHDB_JS,
+        "_app/immutable/entry/app.1eoWiKfD.js" => Some((
+            _APP_IMMUTABLE_ENTRY_APP_1EOWIKFD_JS,
             "application/javascript",
         )),
-        "_app/immutable/entry/start.xJDiKkZy.js" => Some((
-            _APP_IMMUTABLE_ENTRY_START_XJDIKKZY_JS,
+        "_app/immutable/entry/start.ObWdMfQE.js" => Some((
+            _APP_IMMUTABLE_ENTRY_START_OBWDMFQE_JS,
             "application/javascript",
         )),
-        "_app/immutable/nodes/0.DR93ZHGF.js" => {
-            Some((_APP_IMMUTABLE_NODES_0_DR93ZHGF_JS, "application/javascript"))
+        "_app/immutable/nodes/0.Df1VIMNm.js" => {
+            Some((_APP_IMMUTABLE_NODES_0_DF1VIMNM_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/1.Bq3SuSXR.js" => {
-            Some((_APP_IMMUTABLE_NODES_1_BQ3SUSXR_JS, "application/javascript"))
+        "_app/immutable/nodes/1.z8RZg-Ax.js" => {
+            Some((_APP_IMMUTABLE_NODES_1_Z8RZG_AX_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/10.Dml_ChVB.js" => Some((
-            _APP_IMMUTABLE_NODES_10_DML_CHVB_JS,
+        "_app/immutable/nodes/10.wnaNgfvb.js" => Some((
+            _APP_IMMUTABLE_NODES_10_WNANGFVB_JS,
             "application/javascript",
         )),
-        "_app/immutable/nodes/11.Dimr-inz.js" => Some((
-            _APP_IMMUTABLE_NODES_11_DIMR_INZ_JS,
+        "_app/immutable/nodes/11.DfxoWv2K.js" => Some((
+            _APP_IMMUTABLE_NODES_11_DFXOWV2K_JS,
             "application/javascript",
         )),
-        "_app/immutable/nodes/2.Cvc1uD-C.js" => {
-            Some((_APP_IMMUTABLE_NODES_2_CVC1UD_C_JS, "application/javascript"))
+        "_app/immutable/nodes/2.CqNxa23Z.js" => {
+            Some((_APP_IMMUTABLE_NODES_2_CQNXA23Z_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/3.CgqR0nD3.js" => {
-            Some((_APP_IMMUTABLE_NODES_3_CGQR0ND3_JS, "application/javascript"))
+        "_app/immutable/nodes/3.BUDt0VRe.js" => {
+            Some((_APP_IMMUTABLE_NODES_3_BUDT0VRE_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/4.BIQSVQqc.js" => {
-            Some((_APP_IMMUTABLE_NODES_4_BIQSVQQC_JS, "application/javascript"))
+        "_app/immutable/nodes/4.BqJPc3uL.js" => {
+            Some((_APP_IMMUTABLE_NODES_4_BQJPC3UL_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/5.K0I8ao-1.js" => {
-            Some((_APP_IMMUTABLE_NODES_5_K0I8AO_1_JS, "application/javascript"))
+        "_app/immutable/nodes/5.BgaMCWLq.js" => {
+            Some((_APP_IMMUTABLE_NODES_5_BGAMCWLQ_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/6.Dp28G1yv.js" => {
-            Some((_APP_IMMUTABLE_NODES_6_DP28G1YV_JS, "application/javascript"))
+        "_app/immutable/nodes/6.DqNWGwzS.js" => {
+            Some((_APP_IMMUTABLE_NODES_6_DQNWGWZS_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/7.C-7j8SHP.js" => {
-            Some((_APP_IMMUTABLE_NODES_7_C_7J8SHP_JS, "application/javascript"))
+        "_app/immutable/nodes/7.BO5QUzLK.js" => {
+            Some((_APP_IMMUTABLE_NODES_7_BO5QUZLK_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/8.C_Sq74-0.js" => {
-            Some((_APP_IMMUTABLE_NODES_8_C_SQ74_0_JS, "application/javascript"))
+        "_app/immutable/nodes/8.DMyblyFK.js" => {
+            Some((_APP_IMMUTABLE_NODES_8_DMYBLYFK_JS, "application/javascript"))
         }
-        "_app/immutable/nodes/9.CJSoN5J7.js" => {
-            Some((_APP_IMMUTABLE_NODES_9_CJSON5J7_JS, "application/javascript"))
+        "_app/immutable/nodes/9.BmwWN5nO.js" => {
+            Some((_APP_IMMUTABLE_NODES_9_BMWWN5NO_JS, "application/javascript"))
         }
         "_app/version.json" => Some((_APP_VERSION_JSON, "application/json")),
         "index.html" => Some((INDEX_HTML, "text/html; charset=utf-8")),
@@ -164,8 +164,8 @@ static _APP_IMMUTABLE_ASSETS_10_CHCESEGK_CSS: &[u8] =
     include_bytes!("../../assets/_app/immutable/assets/10.CHCeSEGk.css.gz");
 static _APP_IMMUTABLE_ASSETS_11_CTZRHHKY_CSS: &[u8] =
     include_bytes!("../../assets/_app/immutable/assets/11.CtZRhhKy.css.gz");
-static _APP_IMMUTABLE_ASSETS_2_B8ZDGYOE_CSS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/assets/2.B8ZDGYoE.css.gz");
+static _APP_IMMUTABLE_ASSETS_2_VT7GZHJ__CSS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/assets/2.VT7GzHJ_.css.gz");
 static _APP_IMMUTABLE_ASSETS_3_BDQ5X82W_CSS: &[u8] =
     include_bytes!("../../assets/_app/immutable/assets/3.BDQ5X82w.css.gz");
 static _APP_IMMUTABLE_ASSETS_4_DFMANKGP_CSS: &[u8] =
@@ -188,64 +188,64 @@ static _APP_IMMUTABLE_CHUNKS_B5XF_ORU_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/B5xf_oRu.js.gz");
 static _APP_IMMUTABLE_CHUNKS_B9CBBV2E_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/B9cBbv2E.js.gz");
+static _APP_IMMUTABLE_CHUNKS_BGESMC_X_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/chunks/BGesMc_X.js.gz");
 static _APP_IMMUTABLE_CHUNKS_BLTVSOAZ_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/BLTvsoaZ.js.gz");
 static _APP_IMMUTABLE_CHUNKS_BR4GNSFD_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/BR4gNsfd.js.gz");
-static _APP_IMMUTABLE_CHUNKS_BY_FQ5LC_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/chunks/BY_fQ5lC.js.gz");
 static _APP_IMMUTABLE_CHUNKS_BHX9EHW4_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/Bhx9EHw4.js.gz");
 static _APP_IMMUTABLE_CHUNKS_BQ6RWP7W_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/Bq6RWp7w.js.gz");
-static _APP_IMMUTABLE_CHUNKS_BXQCJCM4_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/chunks/BxqCJcm4.js.gz");
 static _APP_IMMUTABLE_CHUNKS_C4FKE_4A_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/C4fKE_4a.js.gz");
+static _APP_IMMUTABLE_CHUNKS_C71HUKAT_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/chunks/C71HuKAt.js.gz");
 static _APP_IMMUTABLE_CHUNKS_CVKHMU0O_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/CVKhMu0o.js.gz");
 static _APP_IMMUTABLE_CHUNKS_CL2HF_2Z_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/Cl2hF-2Z.js.gz");
-static _APP_IMMUTABLE_CHUNKS_COIJ8EIT_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/chunks/CoiJ8EIT.js.gz");
 static _APP_IMMUTABLE_CHUNKS_DINAOACM_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/DINAOACm.js.gz");
 static _APP_IMMUTABLE_CHUNKS_DB4PR3F__JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/Db4PR3F_.js.gz");
 static _APP_IMMUTABLE_CHUNKS_DBJJ7NWO_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/DbjJ7nwO.js.gz");
+static _APP_IMMUTABLE_CHUNKS_DBOS3XUT_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/chunks/Dbos3XuT.js.gz");
 static _APP_IMMUTABLE_CHUNKS_FY2BZYY__JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/fy2BZYY_.js.gz");
 static _APP_IMMUTABLE_CHUNKS_G8D1VRJC_JS: &[u8] =
     include_bytes!("../../assets/_app/immutable/chunks/g8d1vrjc.js.gz");
-static _APP_IMMUTABLE_ENTRY_APP_CWWYGHDB_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/entry/app.CwwyGhDB.js.gz");
-static _APP_IMMUTABLE_ENTRY_START_XJDIKKZY_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/entry/start.xJDiKkZy.js.gz");
-static _APP_IMMUTABLE_NODES_0_DR93ZHGF_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/0.DR93ZHGF.js.gz");
-static _APP_IMMUTABLE_NODES_1_BQ3SUSXR_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/1.Bq3SuSXR.js.gz");
-static _APP_IMMUTABLE_NODES_10_DML_CHVB_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/10.Dml_ChVB.js.gz");
-static _APP_IMMUTABLE_NODES_11_DIMR_INZ_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/11.Dimr-inz.js.gz");
-static _APP_IMMUTABLE_NODES_2_CVC1UD_C_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/2.Cvc1uD-C.js.gz");
-static _APP_IMMUTABLE_NODES_3_CGQR0ND3_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/3.CgqR0nD3.js.gz");
-static _APP_IMMUTABLE_NODES_4_BIQSVQQC_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/4.BIQSVQqc.js.gz");
-static _APP_IMMUTABLE_NODES_5_K0I8AO_1_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/5.K0I8ao-1.js.gz");
-static _APP_IMMUTABLE_NODES_6_DP28G1YV_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/6.Dp28G1yv.js.gz");
-static _APP_IMMUTABLE_NODES_7_C_7J8SHP_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/7.C-7j8SHP.js.gz");
-static _APP_IMMUTABLE_NODES_8_C_SQ74_0_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/8.C_Sq74-0.js.gz");
-static _APP_IMMUTABLE_NODES_9_CJSON5J7_JS: &[u8] =
-    include_bytes!("../../assets/_app/immutable/nodes/9.CJSoN5J7.js.gz");
+static _APP_IMMUTABLE_ENTRY_APP_1EOWIKFD_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/entry/app.1eoWiKfD.js.gz");
+static _APP_IMMUTABLE_ENTRY_START_OBWDMFQE_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/entry/start.ObWdMfQE.js.gz");
+static _APP_IMMUTABLE_NODES_0_DF1VIMNM_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/0.Df1VIMNm.js.gz");
+static _APP_IMMUTABLE_NODES_1_Z8RZG_AX_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/1.z8RZg-Ax.js.gz");
+static _APP_IMMUTABLE_NODES_10_WNANGFVB_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/10.wnaNgfvb.js.gz");
+static _APP_IMMUTABLE_NODES_11_DFXOWV2K_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/11.DfxoWv2K.js.gz");
+static _APP_IMMUTABLE_NODES_2_CQNXA23Z_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/2.CqNxa23Z.js.gz");
+static _APP_IMMUTABLE_NODES_3_BUDT0VRE_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/3.BUDt0VRe.js.gz");
+static _APP_IMMUTABLE_NODES_4_BQJPC3UL_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/4.BqJPc3uL.js.gz");
+static _APP_IMMUTABLE_NODES_5_BGAMCWLQ_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/5.BgaMCWLq.js.gz");
+static _APP_IMMUTABLE_NODES_6_DQNWGWZS_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/6.DqNWGwzS.js.gz");
+static _APP_IMMUTABLE_NODES_7_BO5QUZLK_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/7.BO5QUzLK.js.gz");
+static _APP_IMMUTABLE_NODES_8_DMYBLYFK_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/8.DMyblyFK.js.gz");
+static _APP_IMMUTABLE_NODES_9_BMWWN5NO_JS: &[u8] =
+    include_bytes!("../../assets/_app/immutable/nodes/9.BmwWN5nO.js.gz");
 static _APP_VERSION_JSON: &[u8] = include_bytes!("../../assets/_app/version.json.gz");
 static INDEX_HTML: &[u8] = include_bytes!("../../assets/index.html.gz");
 static ROBOTS_TXT: &[u8] = include_bytes!("../../assets/robots.txt.gz");
