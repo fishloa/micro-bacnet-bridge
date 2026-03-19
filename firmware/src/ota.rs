@@ -230,6 +230,7 @@ pub async fn handle_firmware_stream<R: PicoRead>(
 /// supplied `content_length` from the `Content-Length` header.  `body_start`
 /// is the slice of the initial read buffer that follows the `\r\n\r\n`
 /// boundary.
+#[allow(dead_code)]
 pub async fn handle_firmware_upload(
     socket: &mut TcpSocket<'_>,
     content_length: usize,
@@ -608,6 +609,7 @@ async fn flush_sector(sector_offset: u32, data: &[u8; SECTOR_SIZE]) -> bool {
 /// Extract the `Content-Length` value from a raw HTTP request header block.
 ///
 /// Returns `None` if the header is absent or cannot be parsed.
+#[allow(dead_code)]
 pub fn parse_content_length(headers: &str) -> Option<usize> {
     for line in headers.lines() {
         let lower = {

@@ -42,6 +42,7 @@ static NTP_SYNCED: AtomicBool = AtomicBool::new(false);
 
 /// Return the current Unix timestamp (seconds since 1970-01-01), or `None`
 /// if NTP has not yet been synchronised.
+#[allow(dead_code)]
 pub fn unix_now() -> Option<u32> {
     let v = UNIX_EPOCH_SECS.load(Ordering::Relaxed);
     if v == 0 {
@@ -52,6 +53,7 @@ pub fn unix_now() -> Option<u32> {
 }
 
 /// Return `true` if at least one NTP sync has completed successfully.
+#[allow(dead_code)]
 pub fn is_synced() -> bool {
     NTP_SYNCED.load(Ordering::Relaxed)
 }

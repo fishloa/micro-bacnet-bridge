@@ -12,6 +12,8 @@
 //! bridge-core tests use it directly (single-threaded).
 
 use crate::bacnet::{BacnetValue, ObjectId};
+use crate::config::{PointMode, Processor};
+use crate::pipeline::process_value;
 use heapless::String;
 
 // ---------------------------------------------------------------------------
@@ -246,6 +248,41 @@ impl BridgeStateInner {
         }
     }
 
+    /// Update a point value after applying the processor pipeline.
+    ///
+    /// This is the primary entry point for BACnet values arriving from the MS/TP bus.
+    /// The pipeline is applied before the value is stored, so everything downstream
+    /// (SSE, REST API, MQTT) sees the post-pipeline value.
+    ///
+    /// - [`PointMode::Ignore`] — the point is not stored at all.
+    /// - [`PointMode::Passthrough`] — the raw value is stored unchanged.
+    /// - [`PointMode::Processed`] — the processor chain is applied; the result is stored.
+    ///
+    /// `processors` must be the slice from the [`crate::config::Convertor`] referenced by
+    /// the point rule. Pass `&[]` when there is no convertor.
+    pub fn update_point_with_pipeline(
+        &mut self,
+        device_idx: usize,
+        object_id: ObjectId,
+        raw_value: BacnetValue,
+        unit: u16,
+        mode: &PointMode,
+        processors: &[Processor],
+    ) {
+        match mode {
+            PointMode::Ignore => {
+                // Drop the value — don't store, don't set dirty flag.
+            }
+            PointMode::Passthrough => {
+                self.update_point(device_idx, object_id, raw_value, unit);
+            }
+            PointMode::Processed => {
+                let processed = process_value(&raw_value, mode, processors);
+                self.update_point(device_idx, object_id, processed, unit);
+            }
+        }
+    }
+
     /// Return the point slice for a device (may contain `None` holes).
     pub fn get_device_points(&self, device_idx: usize) -> &[Option<PointEntry>] {
         if device_idx >= MAX_DEVICES {
@@ -471,5 +508,147 @@ mod tests {
             0,
         );
         assert_eq!(s.point_counts[dev_idx], MAX_POINTS_PER_DEVICE);
+    }
+
+    // -----------------------------------------------------------------------
+    // update_point_with_pipeline
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn pipeline_ignore_does_not_store() {
+        let mut s = BridgeStateInner::new();
+        let dev_idx = s.upsert_device(1, 0, "");
+        let oid = make_object_id(ObjectType::AnalogInput, 0);
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Real(42.0),
+            62,
+            &crate::config::PointMode::Ignore,
+            &[],
+        );
+        // Nothing should be stored.
+        assert_eq!(s.point_counts[dev_idx], 0);
+    }
+
+    #[test]
+    fn pipeline_passthrough_stores_raw_value() {
+        let mut s = BridgeStateInner::new();
+        let dev_idx = s.upsert_device(1, 0, "");
+        let oid = make_object_id(ObjectType::AnalogInput, 0);
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Real(21.5),
+            62,
+            &crate::config::PointMode::Passthrough,
+            &[],
+        );
+        assert_eq!(s.point_counts[dev_idx], 1);
+        let p = s.points[dev_idx][0].as_ref().unwrap();
+        assert_eq!(p.present_value, Some(BacnetValue::Real(21.5)));
+        assert_eq!(p.unit, 62);
+        assert!(p.dirty);
+    }
+
+    #[test]
+    fn pipeline_processed_applies_scale() {
+        use crate::config::Processor;
+        let mut s = BridgeStateInner::new();
+        let dev_idx = s.upsert_device(1, 0, "");
+        let oid = make_object_id(ObjectType::AnalogInput, 0);
+        // Scale × 2 + 10: raw 5.0 → stored 20.0
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Real(5.0),
+            62,
+            &crate::config::PointMode::Processed,
+            &[Processor::Scale {
+                factor: 2.0,
+                offset: 10.0,
+            }],
+        );
+        assert_eq!(s.point_counts[dev_idx], 1);
+        let p = s.points[dev_idx][0].as_ref().unwrap();
+        assert_eq!(p.present_value, Some(BacnetValue::Real(20.0)));
+    }
+
+    #[test]
+    fn pipeline_processed_no_processors_stores_raw() {
+        let mut s = BridgeStateInner::new();
+        let dev_idx = s.upsert_device(1, 0, "");
+        let oid = make_object_id(ObjectType::AnalogInput, 0);
+        // Processed with empty processor list — value passes through unchanged.
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Real(7.0),
+            0,
+            &crate::config::PointMode::Processed,
+            &[],
+        );
+        let p = s.points[dev_idx][0].as_ref().unwrap();
+        assert_eq!(p.present_value, Some(BacnetValue::Real(7.0)));
+    }
+
+    #[test]
+    fn pipeline_ignore_then_passthrough_stores_on_second_call() {
+        let mut s = BridgeStateInner::new();
+        let dev_idx = s.upsert_device(1, 0, "");
+        let oid = make_object_id(ObjectType::AnalogInput, 0);
+        // First call ignored.
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Real(1.0),
+            0,
+            &crate::config::PointMode::Ignore,
+            &[],
+        );
+        assert_eq!(s.point_counts[dev_idx], 0);
+        // Second call passthrough.
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Real(2.0),
+            0,
+            &crate::config::PointMode::Passthrough,
+            &[],
+        );
+        assert_eq!(s.point_counts[dev_idx], 1);
+        let p = s.points[dev_idx][0].as_ref().unwrap();
+        assert_eq!(p.present_value, Some(BacnetValue::Real(2.0)));
+    }
+
+    #[test]
+    fn pipeline_processed_map_states() {
+        use crate::config::Processor;
+        use heapless::{String, Vec};
+
+        let mut s = BridgeStateInner::new();
+        let dev_idx = s.upsert_device(1, 0, "");
+        let oid = make_object_id(ObjectType::MultiStateInput, 1);
+
+        let mut labels: Vec<String<12>, 8> = Vec::new();
+        for name in &["Off", "Heat", "Cool"] {
+            let mut hs = String::<12>::new();
+            let _ = hs.push_str(name);
+            let _ = labels.push(hs);
+        }
+
+        s.update_point_with_pipeline(
+            dev_idx,
+            oid,
+            BacnetValue::Enumerated(2), // → "Heat"
+            0,
+            &crate::config::PointMode::Processed,
+            &[Processor::MapStates(labels)],
+        );
+
+        let p = s.points[dev_idx][0].as_ref().unwrap();
+        let mut expected = String::<64>::new();
+        let _ = expected.push_str("Heat");
+        assert_eq!(p.present_value, Some(BacnetValue::CharString(expected)));
     }
 }

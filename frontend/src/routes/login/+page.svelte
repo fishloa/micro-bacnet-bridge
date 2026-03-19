@@ -45,7 +45,7 @@
 		</div>
 
 		{#if error}
-			<div class="vui-alert vui-alert-danger" style="margin-bottom: var(--vui-space-md);">
+			<div class="vui-alert vui-alert-danger mb-md">
 				{error}
 			</div>
 		{/if}

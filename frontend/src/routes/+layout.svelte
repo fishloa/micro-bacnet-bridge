@@ -18,7 +18,7 @@
 
 <div class="app-shell">
 	<nav class="app-nav">
-		<div style="padding: 4px 0 8px; font-size: 20px; color: var(--vui-accent); font-weight: 700;">B</div>
+		<div class="app-brand">B</div>
 		{#each navItems as item}
 			<a
 				href={item.href}

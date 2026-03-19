@@ -32,18 +32,21 @@ use embassy_sync::mutex::Mutex;
 ///
 /// When `None`, syslog sending is disabled. Set via [`set_target`] or
 /// [`clear_target`].
+#[allow(dead_code)]
 pub static SYSLOG_TARGET: Mutex<CriticalSectionRawMutex, Option<([u8; 4], u16)>> = Mutex::new(None);
 
 /// Configure the syslog destination.
 ///
 /// Call this after loading config from flash or when the admin UI updates
 /// the syslog server address.
+#[allow(dead_code)]
 pub async fn set_target(ip: [u8; 4], port: u16) {
     let mut t = SYSLOG_TARGET.lock().await;
     *t = Some((ip, port));
 }
 
 /// Disable syslog (clear the target).
+#[allow(dead_code)]
 pub async fn clear_target() {
     let mut t = SYSLOG_TARGET.lock().await;
     *t = None;
@@ -60,6 +63,7 @@ pub async fn clear_target() {
 ///
 /// The device hostname is read from the HTTP config store; if not yet
 /// available, `"bacnet-bridge"` is used as a fallback.
+#[allow(dead_code)]
 pub async fn send_log(stack: Stack<'static>, severity: SyslogSeverity, msg: &str) {
     // Check target under lock, then release before awaiting the socket
     let target = {
@@ -135,21 +139,25 @@ pub async fn send_log(stack: Stack<'static>, severity: SyslogSeverity, msg: &str
 // ---------------------------------------------------------------------------
 
 /// Log an informational message.
+#[allow(dead_code)]
 pub async fn info(stack: Stack<'static>, msg: &str) {
     send_log(stack, SyslogSeverity::Info, msg).await;
 }
 
 /// Log a warning message.
+#[allow(dead_code)]
 pub async fn warning(stack: Stack<'static>, msg: &str) {
     send_log(stack, SyslogSeverity::Warning, msg).await;
 }
 
 /// Log an error message.
+#[allow(dead_code)]
 pub async fn error(stack: Stack<'static>, msg: &str) {
     send_log(stack, SyslogSeverity::Error, msg).await;
 }
 
 /// Log a debug message.
+#[allow(dead_code)]
 pub async fn debug(stack: Stack<'static>, msg: &str) {
     send_log(stack, SyslogSeverity::Debug, msg).await;
 }

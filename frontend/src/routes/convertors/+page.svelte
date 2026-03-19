@@ -236,7 +236,7 @@
 						<th>Name</th>
 						<th>ID</th>
 						<th>Processors</th>
-						<th style="text-align:right">Actions</th>
+						<th class="th-right">Actions</th>
 					</tr>
 				</thead>
 				<tbody>
@@ -293,7 +293,7 @@
 			<!-- Processor list -->
 			<div class="proc-section">
 				<div class="proc-header">
-					<span class="text-sm" style="font-weight: var(--vui-font-semibold)">Processors</span>
+					<span class="text-sm text-semibold">Processors</span>
 					<div class="proc-add-row">
 						<span class="text-xs text-sub">Add:</span>
 						<button class="vui-btn vui-btn-sm" onclick={() => addProcessor('set_unit')}>Set Unit</button>
@@ -335,7 +335,7 @@
 										</select>
 									{:else if proc.type === 'scale'}
 										<span class="proc-type-badge">Scale</span>
-										<label class="proc-field-label text-xs">×</label>
+										<span class="proc-field-label text-xs">×</span>
 										<input
 											class="vui-input proc-num"
 											type="number"
@@ -343,7 +343,7 @@
 											value={proc.factor}
 											oninput={(e) => updateProcessor(idx, { type: 'scale', factor: parseFloat((e.target as HTMLInputElement).value) || 1, offset: proc.offset })}
 										/>
-										<label class="proc-field-label text-xs">+</label>
+										<span class="proc-field-label text-xs">+</span>
 										<input
 											class="vui-input proc-num"
 											type="number"
@@ -418,12 +418,6 @@
 		display: flex;
 		flex-direction: column;
 		gap: 2px;
-	}
-
-	.page-title {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-semibold);
-		margin: 0;
 	}
 
 	.header-right {
@@ -596,6 +590,14 @@
 
 	.proc-field-label {
 		color: var(--vui-text-muted);
+	}
+
+	.th-right {
+		text-align: right;
+	}
+
+	.text-semibold {
+		font-weight: var(--vui-font-semibold);
 	}
 
 	.preview-row {

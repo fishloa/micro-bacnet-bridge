@@ -87,6 +87,13 @@ a:hover {
 	flex: 1;
 }
 
+.app-brand {
+	padding: 4px 0 8px;
+	font-size: 20px;
+	color: var(--vui-accent);
+	font-weight: 700;
+}
+
 .app-content {
 	flex: 1;
 	overflow: hidden;

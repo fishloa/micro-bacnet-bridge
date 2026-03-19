@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import type { NetworkConfig, BacnetConfig, NtpConfig, SyslogConfig, MqttConfig, SnmpConfig } from '$lib/api';
 	import { exposureConfig } from '$lib/stores';

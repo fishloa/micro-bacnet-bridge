@@ -208,10 +208,10 @@
 		</div>
 
 		{#if otaStatus === 'uploading'}
-			<div class="ota-progress-wrap">
-				<div class="ota-progress-bar" style="width: {otaProgress}%;"></div>
+			<div class="vui-progress-wrap">
+				<div class="vui-progress-bar" style="width: {otaProgress}%;"></div>
 			</div>
-			<p class="text-sub ota-progress-label">{otaProgress}%</p>
+			<p class="vui-progress-label">{otaProgress}%</p>
 		{/if}
 
 		<div class="vui-alert vui-alert-danger">
@@ -299,25 +299,6 @@
 		display: none;
 	}
 
-	.ota-progress-wrap {
-		height: 6px;
-		background: var(--vui-border);
-		border-radius: 3px;
-		overflow: hidden;
-		margin-bottom: 4px;
-	}
 
-	.ota-progress-bar {
-		height: 100%;
-		background: var(--vui-color-primary, #3b82f6);
-		border-radius: 3px;
-		transition: width 0.2s ease;
-	}
-
-	.ota-progress-label {
-		text-align: right;
-		font-size: var(--vui-text-xs);
-		margin-bottom: var(--vui-space-sm);
-	}
 
 </style>

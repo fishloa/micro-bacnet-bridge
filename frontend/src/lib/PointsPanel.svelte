@@ -175,11 +175,6 @@
 		padding: var(--vui-space-sm) var(--vui-space-lg);
 		border-top: 1px solid var(--vui-border);
 	}
-	.panel-header h2 {
-		font-size: var(--vui-text-lg);
-		font-weight: var(--vui-font-semibold);
-		margin-bottom: 2px;
-	}
 	.toolbar {
 		display: flex;
 		align-items: center;
