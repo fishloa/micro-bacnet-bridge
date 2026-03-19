@@ -28,6 +28,8 @@ use embassy_net::{IpEndpoint, Ipv4Address, Stack};
 use embassy_time::{with_timeout, Duration, Timer};
 use portable_atomic::{AtomicBool, AtomicU32, Ordering};
 
+use crate::dns;
+
 // ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
@@ -62,9 +64,11 @@ pub fn is_synced() -> bool {
 // Configuration
 // ---------------------------------------------------------------------------
 
-/// Cloudflare time (time.cloudflare.com anycast) — 162.159.200.1.
-/// Used because we have no DNS resolver in firmware.
-const NTP_SERVER_IP: Ipv4Address = Ipv4Address::new(162, 159, 200, 1);
+/// NTP hostname resolved via DNS (uses DHCP-provided DNS server).
+const NTP_HOSTNAME: &str = "pool.ntp.org";
+
+/// Fallback NTP server if DNS resolution fails (Cloudflare time anycast).
+const NTP_FALLBACK_IP: Ipv4Address = Ipv4Address::new(162, 159, 200, 1);
 
 /// How often to re-sync after the first successful sync (seconds).
 const SYNC_INTERVAL_SECS: u64 = 3600;
@@ -124,6 +128,19 @@ pub async fn ntp_task(stack: Stack<'static>) {
 ///
 /// Returns the Unix epoch seconds on success, `None` if all attempts fail.
 async fn sync_once(stack: Stack<'static>) -> Option<u32> {
+    // Resolve NTP server via DNS; fall back to hardcoded IP.
+    let server_ip = match dns::resolve(stack, NTP_HOSTNAME).await {
+        Some(octets) => {
+            let ip = Ipv4Address::new(octets[0], octets[1], octets[2], octets[3]);
+            info!("ntp: resolved {} → {}", NTP_HOSTNAME, ip);
+            ip
+        }
+        None => {
+            warn!("ntp: DNS failed for {}, using fallback", NTP_HOSTNAME);
+            NTP_FALLBACK_IP
+        }
+    };
+
     let mut rx_meta = [PacketMetadata::EMPTY; RX_META];
     let mut tx_meta = [PacketMetadata::EMPTY; TX_META];
     let mut rx_buf = [0u8; RX_BUF];
@@ -131,13 +148,12 @@ async fn sync_once(stack: Stack<'static>) -> Option<u32> {
 
     let mut socket = UdpSocket::new(stack, &mut rx_meta, &mut rx_buf, &mut tx_meta, &mut tx_buf);
 
-    // Bind to an ephemeral port (0 = let the stack choose)
     if socket.bind(0).is_err() {
         warn!("ntp: failed to bind UDP socket");
         return None;
     }
 
-    let server_endpoint = IpEndpoint::new(NTP_SERVER_IP.into(), NTP_PORT);
+    let server_endpoint = IpEndpoint::new(server_ip.into(), NTP_PORT);
 
     let mut req_buf = [0u8; 48];
     let req_len = encode_request(&mut req_buf);
