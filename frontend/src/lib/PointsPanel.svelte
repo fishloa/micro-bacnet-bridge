@@ -87,7 +87,7 @@
 <div class="points-panel">
 		<div class="panel-header">
 			<div>
-				<span class="vui-page-title">Dashboard</span>
+				<h1 class="vui-page-title">Dashboard</h1>
 				<span class="text-sm text-sub">
 					{$filteredPoints.length} of {$points.length} objects
 				</span>
