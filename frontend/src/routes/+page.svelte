@@ -77,12 +77,7 @@
 <div class="dashboard">
 	<!-- Left sidebar: device list -->
 	<aside class="device-sidebar">
-		<div class="sidebar-header">
-			<span class="sidebar-title">Devices</span>
-			<span class="device-count">{devices.length}</span>
-		</div>
-
-		<!-- "All Devices" option -->
+		<!-- Device list -->
 		<button
 			class="device-item"
 			class:active={showAllDevices}
