@@ -246,7 +246,7 @@
 							<td class="cell-id mono">{c.id}</td>
 							<td class="cell-preview">{convertorPreview(c)}</td>
 							<td class="cell-actions">
-								<button class="vui-btn vui-btn-sm" onclick={() => openEdit(c)}>Edit</button>
+								<button class="vui-btn vui-btn-sm vui-btn-primary" onclick={() => openEdit(c)}>Edit</button>
 								<button
 									class="vui-btn vui-btn-sm vui-btn-danger"
 									onclick={() => deleteConvertor(c.id)}
@@ -452,17 +452,7 @@
 		border-collapse: collapse;
 	}
 
-	thead th {
-		padding: var(--vui-space-sm) var(--vui-space-md);
-		text-align: left;
-		font-size: var(--vui-text-xs);
-		font-weight: var(--vui-font-semibold);
-		color: var(--vui-text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		border-bottom: 1px solid var(--vui-border);
-		white-space: nowrap;
-	}
+	/* thead th styled by design system */
 
 	td {
 		padding: 8px var(--vui-space-md);
@@ -475,8 +465,8 @@
 	tr:hover td { background: var(--vui-surface-hover); }
 
 	.cell-name { font-weight: var(--vui-font-medium); min-width: 160px; }
-	.cell-id { min-width: 120px; color: var(--vui-text-sub); }
-	.cell-preview { color: var(--vui-text-sub); font-size: var(--vui-text-xs); }
+	.cell-id { min-width: 120px; }
+	.cell-preview { }
 	.cell-actions { text-align: right; white-space: nowrap; }
 	.cell-actions .vui-btn { margin-left: 6px; }
 
