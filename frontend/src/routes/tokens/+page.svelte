@@ -81,7 +81,7 @@
 		<div class="vui-alert vui-alert-success token-reveal vui-animate-fade-in">
 			<strong>Token created.</strong> Copy it now — it will not be shown again.
 			<div class="token-value">
-				<code class="mono">{newPlainToken}</code>
+				<code>{newPlainToken}</code>
 				<button class="vui-btn vui-btn-sm vui-btn-ghost" onclick={copyToken}>Copy</button>
 			</div>
 		</div>
@@ -134,7 +134,7 @@
 				<tbody>
 					{#each tokens as tok (tok.id)}
 						<tr>
-							<td class="mono">{tok.name}</td>
+							<td>{tok.name}</td>
 							<td>
 								<span
 									class="vui-badge"
@@ -166,7 +166,6 @@
 <style>
 	.tokens-page {
 		padding: var(--vui-space-lg);
-		max-width: 700px;
 		height: 100%;
 		overflow-y: auto;
 		display: flex;

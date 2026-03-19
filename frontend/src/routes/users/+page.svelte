@@ -104,7 +104,7 @@
 			<tbody>
 				{#each users as user (user.id)}
 					<tr>
-						<td class="mono">{user.username}</td>
+						<td>{user.username}</td>
 						<td>
 							<span class="vui-badge" class:vui-badge-success={user.role === 'admin'} class:vui-badge-info={user.role === 'viewer'}>
 								{user.role}
@@ -129,7 +129,6 @@
 		padding: var(--vui-space-lg);
 		height: 100%;
 		overflow-y: auto;
-		max-width: 640px;
 	}
 	.page-header {
 		justify-content: space-between;

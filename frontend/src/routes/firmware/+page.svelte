@@ -130,7 +130,7 @@
 		<div class="vui-card vui-animate-fade-in">
 			<div class="vui-section-header">Current Version</div>
 			<div class="version-display">
-				<span class="version-num mono">v{status.firmwareVersion}</span>
+				<span class="version-num">v{status.firmwareVersion}</span>
 				<span class="vui-badge vui-badge-success">Running</span>
 			</div>
 		</div>
@@ -158,7 +158,7 @@
 					<label for="manifest-url">Manifest URL</label>
 					<input
 						id="manifest-url"
-						class="vui-input mono"
+						class="vui-input"
 						type="url"
 						bind:value={otaConfig.manifest_url}
 						placeholder="https://example.com/firmware/manifest.json"
@@ -223,7 +223,6 @@
 <style>
 	.firmware-page {
 		padding: var(--vui-space-lg);
-		max-width: 700px;
 		height: 100%;
 		overflow-y: auto;
 		display: flex;

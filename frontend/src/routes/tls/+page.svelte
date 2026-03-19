@@ -150,11 +150,11 @@
 			{#if tlsStatus.enabled}
 				<div class="status-row">
 					<span class="text-sub">Certificate CN</span>
-					<span class="mono">{tlsStatus.subject}</span>
+					<span>{tlsStatus.subject}</span>
 				</div>
 				<div class="status-row">
 					<span class="text-sub">Expires</span>
-					<span class="mono">{tlsStatus.expiry}</span>
+					<span>{tlsStatus.expiry}</span>
 				</div>
 			{/if}
 		</div>
@@ -253,7 +253,6 @@
 <style>
 	.tls-page {
 		padding: var(--vui-space-lg);
-		max-width: 700px;
 		height: 100%;
 		overflow-y: auto;
 		display: flex;
@@ -287,7 +286,6 @@
 
 	.pem-textarea {
 		width: 100%;
-		font-family: var(--vui-font-mono, monospace);
 		font-size: 12px;
 		background: var(--vui-surface);
 		color: var(--vui-text);

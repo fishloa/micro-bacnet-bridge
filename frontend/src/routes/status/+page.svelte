@@ -108,22 +108,22 @@
 		<div class="status-grid vui-animate-fade-in">
 			<div class="vui-card stat-card">
 				<div class="stat-label">Uptime</div>
-				<div class="stat-value mono">{formatUptime(status.uptime)}</div>
+				<div class="stat-value">{formatUptime(status.uptime)}</div>
 			</div>
 			<div class="vui-card stat-card">
 				<div class="stat-label">IP Address</div>
-				<div class="stat-value mono">{status.ip}</div>
+				<div class="stat-value">{status.ip}</div>
 				<span class="vui-badge" class:vui-badge-success={status.dhcp}>
 					{status.dhcp ? 'DHCP' : 'Static'}
 				</span>
 			</div>
 			<div class="vui-card stat-card">
 				<div class="stat-label">Hostname</div>
-				<div class="stat-value mono">{status.hostname}.local</div>
+				<div class="stat-value">{status.hostname}.local</div>
 			</div>
 			<div class="vui-card stat-card">
 				<div class="stat-label">Firmware</div>
-				<div class="stat-value mono">v{status.firmwareVersion}</div>
+				<div class="stat-value">v{status.firmwareVersion}</div>
 			</div>
 			<div class="vui-card stat-card">
 				<div class="stat-label">Devices Discovered</div>
@@ -139,11 +139,11 @@
 			<div class="vui-section-header">MS/TP Statistics</div>
 			<div class="stat-row">
 				<span class="text-sub">Frames Sent</span>
-				<span class="mono">{status.mstpFramesSent.toLocaleString()}</span>
+				<span>{status.mstpFramesSent.toLocaleString()}</span>
 			</div>
 			<div class="stat-row">
 				<span class="text-sub">Frames Received</span>
-				<span class="mono">{status.mstpFramesRecv.toLocaleString()}</span>
+				<span>{status.mstpFramesRecv.toLocaleString()}</span>
 			</div>
 		</div>
 
@@ -215,7 +215,6 @@
 		padding: var(--vui-space-lg);
 		height: 100%;
 		overflow-y: auto;
-		max-width: 800px;
 	}
 	h1 {
 		font-size: var(--vui-text-xl);

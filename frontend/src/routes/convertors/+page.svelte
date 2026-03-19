@@ -243,7 +243,7 @@
 					{#each convertors as c (c.id)}
 						<tr>
 							<td class="cell-name">{c.name}</td>
-							<td class="cell-id mono">{c.id}</td>
+							<td class="cell-id">{c.id}</td>
 							<td class="cell-preview">{convertorPreview(c)}</td>
 							<td class="cell-actions">
 								<button class="vui-btn vui-btn-sm vui-btn-primary" onclick={() => openEdit(c)}>Edit</button>
@@ -280,7 +280,7 @@
 				<label class="form-label" for="conv-id">ID</label>
 				<input
 					id="conv-id"
-					class="vui-input form-input mono"
+					class="vui-input form-input"
 					type="text"
 					placeholder="e.g. temp-c"
 					maxlength="16"
@@ -585,7 +585,6 @@
 		width: 80px;
 		padding: 4px 6px;
 		font-size: var(--vui-text-sm);
-		font-family: var(--vui-font-mono, monospace);
 		text-align: right;
 	}
 
@@ -593,12 +592,10 @@
 		width: 220px;
 		padding: 4px 6px;
 		font-size: var(--vui-text-sm);
-		font-family: var(--vui-font-mono, monospace);
 	}
 
 	.proc-field-label {
 		color: var(--vui-text-muted);
-		font-family: var(--vui-font-mono, monospace);
 	}
 
 	.preview-row {
@@ -616,13 +613,6 @@
 		border-top: 1px solid var(--vui-border);
 	}
 
-	.mono { font-family: var(--vui-font-mono, monospace); }
-
-	/* Button size variants */
-	:global(.vui-btn-sm) {
-		padding: 4px 10px;
-		font-size: var(--vui-text-xs);
-	}
 	:global(.vui-btn-xs) {
 		padding: 2px 6px;
 		font-size: var(--vui-text-xs);

@@ -95,9 +95,6 @@ a:hover {
 }
 
 /* Utility classes */
-.mono {
-	font-family: var(--vui-font-mono);
-}
 
 .text-sub {
 	color: var(--vui-text-sub);

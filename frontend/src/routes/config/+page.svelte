@@ -138,19 +138,19 @@
 					{#if !net.dhcp}
 						<tr>
 							<td class="field-label">IP Address</td>
-							<td><input class="vui-input mono" bind:value={net.ip} placeholder="192.168.1.100" /></td>
+							<td><input class="vui-input" bind:value={net.ip} placeholder="192.168.1.100" /></td>
 						</tr>
 						<tr>
 							<td class="field-label">Subnet Mask</td>
-							<td><input class="vui-input mono" bind:value={net.subnet} placeholder="255.255.255.0" /></td>
+							<td><input class="vui-input" bind:value={net.subnet} placeholder="255.255.255.0" /></td>
 						</tr>
 						<tr>
 							<td class="field-label">Gateway</td>
-							<td><input class="vui-input mono" bind:value={net.gateway} placeholder="192.168.1.1" /></td>
+							<td><input class="vui-input" bind:value={net.gateway} placeholder="192.168.1.1" /></td>
 						</tr>
 						<tr>
 							<td class="field-label">DNS</td>
-							<td><input class="vui-input mono" bind:value={net.dns} placeholder="192.168.1.1" /></td>
+							<td><input class="vui-input" bind:value={net.dns} placeholder="192.168.1.1" /></td>
 						</tr>
 					{/if}
 				</tbody>
@@ -169,7 +169,7 @@
 				<tbody>
 					<tr>
 						<td class="field-label">Device ID</td>
-						<td><input class="vui-input mono" type="number" bind:value={bacnet.deviceId} /></td>
+						<td><input class="vui-input" type="number" bind:value={bacnet.deviceId} /></td>
 					</tr>
 					<tr>
 						<td class="field-label">Device Name</td>
@@ -181,7 +181,7 @@
 					</tr>
 					<tr>
 						<td class="field-label">MS/TP MAC (0–127)</td>
-						<td><input class="vui-input mono" type="number" min="0" max="127" bind:value={bacnet.mstpMac} /></td>
+						<td><input class="vui-input" type="number" min="0" max="127" bind:value={bacnet.mstpMac} /></td>
 					</tr>
 					<tr>
 						<td class="field-label">MS/TP Baud Rate</td>
@@ -196,7 +196,7 @@
 					</tr>
 					<tr>
 						<td class="field-label">Max Master</td>
-						<td><input class="vui-input mono" type="number" min="1" max="127" bind:value={bacnet.maxMaster} /></td>
+						<td><input class="vui-input" type="number" min="1" max="127" bind:value={bacnet.maxMaster} /></td>
 					</tr>
 				</tbody>
 			</table>
@@ -224,20 +224,20 @@
 						{#if !ntp.use_dhcp_servers}
 							<tr>
 								<td class="field-label">Server 1</td>
-								<td><input class="vui-input mono" bind:value={ntp.servers[0]} placeholder="pool.ntp.org" /></td>
+								<td><input class="vui-input" bind:value={ntp.servers[0]} placeholder="pool.ntp.org" /></td>
 							</tr>
 							<tr>
 								<td class="field-label">Server 2</td>
-								<td><input class="vui-input mono" bind:value={ntp.servers[1]} placeholder="time.cloudflare.com" /></td>
+								<td><input class="vui-input" bind:value={ntp.servers[1]} placeholder="time.cloudflare.com" /></td>
 							</tr>
 							<tr>
 								<td class="field-label">Server 3</td>
-								<td><input class="vui-input mono" bind:value={ntp.servers[2]} placeholder="time.google.com" /></td>
+								<td><input class="vui-input" bind:value={ntp.servers[2]} placeholder="time.google.com" /></td>
 							</tr>
 						{/if}
 						<tr>
 							<td class="field-label">Sync Interval (s)</td>
-							<td><input class="vui-input mono" type="number" min="60" bind:value={ntp.sync_interval_secs} /></td>
+							<td><input class="vui-input" type="number" min="60" bind:value={ntp.sync_interval_secs} /></td>
 						</tr>
 					{/if}
 				</tbody>
@@ -288,11 +288,11 @@
 						{#if mqtt.enabled}
 							<tr>
 								<td class="field-label">Broker</td>
-								<td><input class="vui-input mono" bind:value={mqtt.broker} placeholder="mqtt.example.com" /></td>
+								<td><input class="vui-input" bind:value={mqtt.broker} placeholder="mqtt.example.com" /></td>
 							</tr>
 							<tr>
 								<td class="field-label">Port</td>
-								<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={mqtt.port} /></td>
+								<td><input class="vui-input" type="number" min="1" max="65535" bind:value={mqtt.port} /></td>
 							</tr>
 							<tr>
 								<td class="field-label">TLS (port 8883)</td>
@@ -300,7 +300,7 @@
 							</tr>
 							<tr>
 								<td class="field-label">Client ID</td>
-								<td><input class="vui-input mono" bind:value={mqtt.client_id} placeholder="bacnet-bridge" /></td>
+								<td><input class="vui-input" bind:value={mqtt.client_id} placeholder="bacnet-bridge" /></td>
 							</tr>
 							<tr>
 								<td class="field-label">Username</td>
@@ -312,7 +312,7 @@
 							</tr>
 							<tr>
 								<td class="field-label">Topic Prefix</td>
-								<td><input class="vui-input mono" bind:value={mqtt.topic_prefix} placeholder="bacnet" /></td>
+								<td><input class="vui-input" bind:value={mqtt.topic_prefix} placeholder="bacnet" /></td>
 							</tr>
 							<tr>
 								<td class="field-label">HA Auto-Discovery</td>
@@ -321,7 +321,7 @@
 							{#if mqtt.ha_discovery_enabled}
 								<tr>
 									<td class="field-label">HA Discovery Prefix</td>
-									<td><input class="vui-input mono" bind:value={mqtt.ha_discovery_prefix} placeholder="homeassistant" /></td>
+									<td><input class="vui-input" bind:value={mqtt.ha_discovery_prefix} placeholder="homeassistant" /></td>
 								</tr>
 							{/if}
 						{/if}
@@ -364,11 +364,11 @@
 					{#if syslog.enabled}
 						<tr>
 							<td class="field-label">Server</td>
-							<td><input class="vui-input mono" bind:value={syslog.server} placeholder="syslog.example.com" /></td>
+							<td><input class="vui-input" bind:value={syslog.server} placeholder="syslog.example.com" /></td>
 						</tr>
 						<tr>
 							<td class="field-label">Port</td>
-							<td><input class="vui-input mono" type="number" min="1" max="65535" bind:value={syslog.port} /></td>
+							<td><input class="vui-input" type="number" min="1" max="65535" bind:value={syslog.port} /></td>
 						</tr>
 					{/if}
 				</tbody>
@@ -392,7 +392,7 @@
 					{#if snmp.enabled}
 						<tr>
 							<td class="field-label">Community String</td>
-							<td><input class="vui-input mono" bind:value={snmp.community} placeholder="public" /></td>
+							<td><input class="vui-input" bind:value={snmp.community} placeholder="public" /></td>
 						</tr>
 					{/if}
 				</tbody>

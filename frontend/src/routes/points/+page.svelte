@@ -359,7 +359,7 @@
 								{/if}
 							</td>
 							<!-- BACnet raw value (live) -->
-							<td class="cell-value mono" class:text-muted={isIgnored}>
+							<td class="cell-value" class:text-muted={isIgnored}>
 								{raw}
 							</td>
 							<!-- Mode dropdown -->
@@ -392,7 +392,7 @@
 								{/if}
 							</td>
 							<!-- Converted value (live computed) -->
-							<td class="cell-converted mono">
+							<td class="cell-converted">
 								{#if isConvert && converted !== null}
 									<span class="converted-value">{converted}</span>
 								{:else if isIgnored}
@@ -586,13 +586,11 @@
 	}
 
 	.cell-value {
-		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
 		color: var(--vui-text);
 	}
 
 	.cell-converted {
-		font-family: var(--vui-font-mono, monospace);
 		font-size: var(--vui-text-sm);
 	}
 
@@ -614,19 +612,6 @@
 		font-size: var(--vui-text-sm);
 	}
 
-	.mono { font-family: var(--vui-font-mono, monospace); }
-
-	.text-muted { color: var(--vui-text-muted); }
-
-	/* Pagination bar */
-	.pagination-bar {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--vui-space-md);
-		flex-shrink: 0;
-		padding: var(--vui-space-xs) 0;
-	}
 
 	.pagination-left {
 		display: flex;

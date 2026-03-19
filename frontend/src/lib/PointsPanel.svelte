@@ -127,11 +127,11 @@
 						<tr class="vui-transition">
 							<td><span class={badgeClass(point.objectType)}>{badgeLabel(point.objectType)}</span></td>
 							{#if showDeviceColumn}
-								<td class="text-sub text-sm mono">{(point as BacnetPoint & { _deviceId?: number })._deviceId ?? $deviceId}</td>
+								<td class="text-sub text-sm">{(point as BacnetPoint & { _deviceId?: number })._deviceId ?? $deviceId}</td>
 							{/if}
 							<td class="point-name">{point.objectName}</td>
 							<td>{point.description}</td>
-							<td class="point-value mono" class:value-changed={changedKeys.has(pointKey(point))}>
+							<td class="point-value" class:value-changed={changedKeys.has(pointKey(point))}>
 								{#if editingPoint?.objectType === point.objectType && editingPoint?.objectInstance === point.objectInstance}
 									<form class="edit-form" onsubmit={(e) => { e.preventDefault(); submitEdit(); }}>
 										<input class="vui-input edit-input" bind:value={editValue} />
@@ -288,6 +288,5 @@
 		width: 80px;
 		padding: 3px 6px;
 		font-size: var(--vui-text-sm);
-		font-family: var(--vui-font-mono);
 	}
 </style>

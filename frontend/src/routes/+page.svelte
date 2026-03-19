@@ -210,7 +210,6 @@
 	}
 
 	.device-mac {
-		font-family: var(--vui-font-mono);
 		font-size: var(--vui-text-xs);
 		color: var(--vui-text-sub);
 	}
