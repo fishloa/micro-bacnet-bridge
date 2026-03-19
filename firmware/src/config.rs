@@ -192,6 +192,9 @@ impl ConfigManager {
             }
         };
 
+        // Pause Core 1 before flash operations (SIO_IRQ_FIFO ISR is in flash).
+        let _pause = crate::core1::pause_core1_for_flash();
+
         // Erase the config region (CONFIG_SIZE = 32 KiB = 8 sectors).
         if let Err(_) = self
             .flash

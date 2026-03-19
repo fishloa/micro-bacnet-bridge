@@ -72,6 +72,40 @@ extern "C" {
 
     /// Shared status struct written by Core 1.
     static g_mstp_status: MstpStatus;
+
+    /// Flash pause handshake flags.
+    static mut g_flash_pause_request: u8;
+    static g_core1_paused: u8;
+}
+
+/// Pause Core 1 for flash operations.
+///
+/// Sets the pause flag and waits for Core 1 to acknowledge it is spinning
+/// in SRAM with the SIO FIFO interrupt disabled. This prevents embassy-rp's
+/// `in_ram()` from triggering the flash-resident SIO_IRQ_FIFO ISR on Core 1.
+///
+/// Returns a guard that resumes Core 1 on drop.
+pub fn pause_core1_for_flash() -> FlashPauseGuard {
+    unsafe {
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request), 1);
+        let mut timeout = 1_000_000u32;
+        while core::ptr::read_volatile(core::ptr::addr_of!(g_core1_paused)) == 0 && timeout > 0 {
+            timeout -= 1;
+            cortex_m::asm::nop();
+        }
+    }
+    FlashPauseGuard(())
+}
+
+/// RAII guard that resumes Core 1 when dropped.
+pub struct FlashPauseGuard(());
+
+impl Drop for FlashPauseGuard {
+    fn drop(&mut self) {
+        unsafe {
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request), 0);
+        }
+    }
 }
 
 /// Read the current MS/TP serial port status from Core 1.

@@ -290,25 +290,17 @@ fn subnet_mask_to_prefix(mask: [u8; 4]) -> u8 {
     raw.leading_ones() as u8
 }
 
-/// Trigger a full system reset via the RP2350A hardware watchdog.
+/// Trigger a full system reset via the RP2350 ROM reboot function.
 ///
-/// Uses `embassy_rp::watchdog::Watchdog::trigger_reset()` which configures
-/// the PSM WDSEL register and triggers an immediate watchdog reset, resetting
-/// all peripherals (SPI, GPIO, etc.) so the W5500 comes up clean on reboot.
-///
-/// Falls back to `cortex_m::peripheral::SCB::sys_reset()` if the watchdog
-/// peripheral is unavailable for any reason.
+/// Uses the bootrom's `reboot()` API which properly resets all peripherals
+/// and re-enters the boot sequence, re-validating the flash image.
+/// This is the correct reboot path after OTA firmware updates.
 pub fn system_reset() -> ! {
-    // SAFETY: We are triggering a reset — the device is about to restart and
-    // there is no safe time to use a peripheral handle. Stealing the WATCHDOG
-    // peripheral here is intentional: it is only used to trigger an immediate
-    // hardware reset and is never returned to the executor.
-    let mut wd =
-        embassy_rp::watchdog::Watchdog::new(unsafe { embassy_rp::peripherals::WATCHDOG::steal() });
-    wd.trigger_reset();
+    // REBOOT_TYPE_FLASH_UPDATE = 0x4, NO_RETURN_ON_SUCCESS = 0x100
+    // Tells the bootrom that flash has been updated and to re-validate the image.
+    embassy_rp::rom_data::reboot(0x104, 500, 0, 0);
 
-    // Should never reach here — trigger_reset() enables the watchdog and sets
-    // the trigger bit which causes an immediate reset.
+    // Should never reach here.
     loop {
         cortex_m::asm::wfi();
     }

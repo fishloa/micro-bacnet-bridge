@@ -27,3 +27,9 @@ pub const FIRMWARE_OFFSET: u32 = 0;
 
 /// Flash offset beyond which OTA must not write (protects config + identity).
 pub const PROTECTED_OFFSET: u32 = CONFIG_OFFSET;
+
+/// OTA staging area — second half of flash, before the config region.
+/// Firmware is uploaded here first (no interrupts/pauses needed for network),
+/// then copied to slot 0 (FIRMWARE_OFFSET) in one batch after verification.
+/// Layout: [Firmware: 0-2MB] [Staging: 2MB-~3.9MB] [Config: ~3.9MB-4MB]
+pub const STAGING_OFFSET: u32 = (FLASH_SIZE / 2) as u32; // 2 MB

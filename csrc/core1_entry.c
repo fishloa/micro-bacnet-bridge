@@ -26,6 +26,7 @@
 #include <stdbool.h>
 
 #include "bacnet_bridge.h"
+#include "platform_rp2350.h"
 
 /*
  * TODO(phase-4): Uncomment once bacnet-stack include paths are confirmed in
@@ -63,6 +64,10 @@ volatile mstp_config_t g_mstp_config;
 
 /** Shared status written by Core 1, read by Core 0. */
 volatile mstp_status_t g_mstp_status;
+
+/** Flash pause handshake — Core 0 sets request, Core 1 acks with paused. */
+volatile uint8_t g_flash_pause_request = 0;
+volatile uint8_t g_core1_paused = 0;
 
 /** Maximum master address to poll (0–127). */
 #define MSTP_DEFAULT_MAX_MASTER     127u
@@ -325,6 +330,41 @@ void core1_entry(void)
     uint32_t last_frame_us = mstp_port_timer_us();
 
     for (;;) {
+        /* Check if Core 0 wants us to pause for flash operations.
+         * We spin entirely in SRAM here. We also disable the SIO FIFO
+         * interrupt so embassy's pause_core1() ISR (which is in flash)
+         * cannot fire while flash is being erased. */
+        if (g_flash_pause_request) {
+            /* Disable SIO_IRQ_FIFO (IRQ 25) so embassy's flash-resident ISR
+             * can't fire while we're in this SRAM loop. */
+            volatile uint32_t *nvic_icer = (volatile uint32_t *)0xE000E180u;
+            nvic_icer[0] = (1u << 25);
+            __asm volatile("dsb");
+            __asm volatile("isb");
+
+            g_core1_paused = 1;
+            while (g_flash_pause_request) {
+                /* While paused, respond to embassy's FIFO pause/resume protocol
+                 * so blocking_erase/blocking_write don't deadlock.
+                 * SIO FIFO_ST bit 0 = VLD (data available to read). */
+                volatile uint32_t *fifo_st = (volatile uint32_t *)(SIO_BASE + 0x050u);
+                volatile uint32_t *fifo_rd = (volatile uint32_t *)(SIO_BASE + 0x058u);
+                volatile uint32_t *fifo_wr = (volatile uint32_t *)(SIO_BASE + 0x054u);
+                if ((*fifo_st) & 1u) {
+                    uint32_t token = *fifo_rd;
+                    /* Echo any token back — embassy expects the same token echoed
+                     * for both PAUSE_TOKEN and RESUME_TOKEN. */
+                    *fifo_wr = token;
+                    __asm volatile("sev"); /* signal event to wake Core 0's WFE */
+                }
+            }
+            g_core1_paused = 0;
+
+            /* Re-enable SIO_IRQ_FIFO */
+            volatile uint32_t *nvic_iser = (volatile uint32_t *)0xE000E100u;
+            nvic_iser[0] = (1u << 25);
+        }
+
         /* Increment the watchdog heartbeat counter (C2). */
         core1_heartbeat++;
 

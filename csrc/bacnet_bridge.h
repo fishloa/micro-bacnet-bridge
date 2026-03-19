@@ -88,6 +88,20 @@ typedef struct {
 /** Global status struct — written by Core 1, read by Core 0 via SSE/API. */
 extern volatile mstp_status_t g_mstp_status;
 
+/**
+ * @brief Flash operation pause flag.
+ *
+ * Core 0 sets this to 1 before flash operations. Core 1 checks it in its
+ * SRAM-resident main loop and spins in SRAM until cleared. This ensures
+ * Core 1 never accesses flash (including via ISR) during erase/write.
+ *
+ * This is necessary because embassy-rp's built-in multicore::pause_core1()
+ * uses the SIO_IRQ_FIFO interrupt handler which resides in flash (.text).
+ * If Core 1 receives that interrupt while flash is being erased, it faults.
+ */
+extern volatile uint8_t g_flash_pause_request;
+extern volatile uint8_t g_core1_paused;
+
 /* --------------------------------------------------------------------------
  * IPC PDU type tags
  * -------------------------------------------------------------------------- */
