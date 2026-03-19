@@ -230,17 +230,12 @@
 	th {
 		text-align: left;
 		padding: var(--vui-space-sm);
-		font-size: var(--vui-text-xs);
-		color: var(--vui-text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
 		border-bottom: 1px solid var(--vui-border);
 	}
 
 	td {
 		padding: var(--vui-space-sm);
 		border-bottom: 1px solid var(--vui-border);
-		font-size: var(--vui-text-sm);
 		vertical-align: middle;
 	}
 </style>
