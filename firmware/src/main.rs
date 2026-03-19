@@ -3,6 +3,18 @@
 #![feature(impl_trait_in_assoc_type)]
 #![recursion_limit = "512"]
 
+/// RP2350 binary info entries for picotool / bootloader.
+#[unsafe(link_section = ".bi_entries")]
+#[used]
+pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
+    embassy_rp::binary_info::rp_program_name!(c"micro-bacnet-bridge"),
+    embassy_rp::binary_info::rp_program_description!(
+        c"BACnet MS/TP to BACnet/IP bridge (Icomb Place)"
+    ),
+    embassy_rp::binary_info::rp_cargo_version!(),
+    embassy_rp::binary_info::rp_program_build_attribute!(),
+];
+
 mod bacnet_ip;
 mod bridge;
 mod config;
@@ -34,9 +46,9 @@ use {defmt_rtt as _, panic_probe as _};
 // ---------------------------------------------------------------------------
 
 /// Number of sockets the network stack can hold simultaneously.
-/// HTTP (8 workers) + mDNS (1) + BACnet/IP (1) + DHCP internal (1) + NTP (1) +
-/// SNMP (1) + MQTT/TCP (1) + DNS/UDP (1) + Syslog/UDP (1) = 16
-const SOCKET_COUNT: usize = 16;
+/// HTTP (4 workers) + mDNS (1) + BACnet/IP (1) + DHCP internal (1) + NTP (1) +
+/// SNMP (1) + MQTT/TCP (1) + DNS/UDP (1) + Syslog/UDP (1) = 12
+const SOCKET_COUNT: usize = 12;
 
 static STACK_RESOURCES: StaticCell<StackResources<SOCKET_COUNT>> = StaticCell::new();
 static WIZNET_STATE: StaticCell<embassy_net_wiznet::State<4, 4>> = StaticCell::new();
@@ -68,8 +80,8 @@ async fn main(spawner: Spawner) {
     // MAC address: stored in a dedicated identity flash sector that survives
     // all reflashes (OTA and BOOTSEL). Generated from ROSC on first boot.
     let mac_addr = match cfg_mgr.load_mac() {
-        Some(mac) => mac,
-        None => {
+        Some(mac) if mac[1..] != [0, 0, 0, 0, 0] => mac,
+        _ => {
             let seed = rosc_random_seed();
             let mac = [
                 0x02, // locally administered, unicast
@@ -125,25 +137,35 @@ async fn main(spawner: Spawner) {
         *flash_guard = Some(cfg_mgr.into_flash());
     }
 
+    // ---- Diagnostic: blink LED twice to show we reached SPI init ----
+    led.set_high();
+    Timer::after_millis(200).await;
+    led.set_low();
+    Timer::after_millis(200).await;
+    led.set_high();
+    Timer::after_millis(200).await;
+    led.set_low();
+    Timer::after_millis(200).await;
+
     // ---- SPI0 for W5500 ----
     let mut spi_cfg = SpiConfig::default();
-    spi_cfg.frequency = 40_000_000;
+    spi_cfg.frequency = 33_000_000;
 
     let spi_bus = Spi::new(
         p.SPI0, p.PIN_18, p.PIN_19, p.PIN_16, p.DMA_CH0, p.DMA_CH1, spi_cfg,
     );
 
     let cs = Output::new(p.PIN_17, Level::High);
-    let spi_dev = ExclusiveDevice::new_no_delay(spi_bus, cs).unwrap();
+    let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay).unwrap();
 
     let w5500_int = embassy_rp::gpio::Input::new(p.PIN_21, embassy_rp::gpio::Pull::Up);
     let mut w5500_rst = Output::new(p.PIN_20, Level::High);
 
-    // Reset the W5500 cleanly — pulse RST low for 1ms then wait 150ms
+    // Reset the W5500 cleanly — pulse RST low for 10ms then wait 500ms
     w5500_rst.set_low();
-    Timer::after_millis(1).await;
+    Timer::after_millis(10).await;
     w5500_rst.set_high();
-    Timer::after_millis(150).await;
+    Timer::after_millis(500).await;
 
     let wiznet_state = WIZNET_STATE.init(embassy_net_wiznet::State::new());
 
@@ -227,7 +249,7 @@ async fn w5500_task(
         ExclusiveDevice<
             Spi<'static, embassy_rp::peripherals::SPI0, embassy_rp::spi::Async>,
             Output<'static>,
-            embedded_hal_bus::spi::NoDelay,
+            embassy_time::Delay,
         >,
         embassy_rp::gpio::Input<'static>,
         Output<'static>,
@@ -255,11 +277,21 @@ async fn net_task(
 /// This is not cryptographically strong but provides enough entropy for
 /// the network stack's ephemeral port selection.
 fn rosc_random_seed() -> u64 {
-    // RP2350: TRNG base = 0x4012_0000; RNG_DATA register offset = 0x204.
-    const RNG_DATA_ADDR: *const u32 = 0x4012_0204 as *const u32;
-    let lo = unsafe { core::ptr::read_volatile(RNG_DATA_ADDR) } as u64;
-    let hi = unsafe { core::ptr::read_volatile(RNG_DATA_ADDR) } as u64;
-    (hi << 32) | lo
+    // ROSC RANDOMBIT register — works without any peripheral setup.
+    // RP2350: ROSC base = 0x400E_8000, RANDOMBIT offset = 0x20.
+    const ROSC_RANDOMBIT: *const u32 = 0x400E_8020 as *const u32;
+
+    let mut val: u64 = 0;
+    for _ in 0..64 {
+        // Small delay between reads to let the ROSC jitter accumulate
+        cortex_m::asm::nop();
+        cortex_m::asm::nop();
+        cortex_m::asm::nop();
+        cortex_m::asm::nop();
+        val = (val << 1) | (unsafe { core::ptr::read_volatile(ROSC_RANDOMBIT) } & 1) as u64;
+    }
+    // Mix — fold top and bottom with XOR to reduce bias
+    val ^ val.rotate_right(17)
 }
 
 /// Convert a subnet mask (e.g. [255,255,255,0]) to a CIDR prefix length.
@@ -268,7 +300,7 @@ fn subnet_mask_to_prefix(mask: [u8; 4]) -> u8 {
     raw.leading_ones() as u8
 }
 
-/// Trigger a full system reset via the RP2040 watchdog.
+/// Trigger a full system reset via the RP2350A watchdog.
 /// Unlike `SCB::sys_reset()`, this resets ALL peripherals (SPI, GPIO, etc.)
 /// so the W5500 comes up clean on reboot.
 pub fn system_reset() -> ! {

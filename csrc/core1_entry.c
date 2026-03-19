@@ -2,7 +2,7 @@
  * @file core1_entry.c
  * @brief Core 1 firmware entry point for the BACnet MS/TP state machine.
  *
- * This translation unit provides the C-side entry point for RP2040 Core 1.
+ * This translation unit provides the C-side entry point for RP2350A Core 1.
  * The Rust runtime on Core 0 launches Core 1 via embassy-rp's
  * multicore::spawn_core1(), which calls core1_entry() with the stack pointer
  * already configured.
@@ -93,7 +93,7 @@ static uint8_t mstp_output_buf[MSTP_OUTPUT_BUFFER_SIZE];
  *
  * For now it is an opaque byte array sized to accommodate the struct, so the
  * file compiles without the bacnet-stack headers.  The actual struct size on
- * RP2040/Cortex-M0+ (4-byte pointers) is approximately 300 bytes; 512 bytes
+ * RP2350A/Cortex-M33 (4-byte pointers) is approximately 300 bytes; 512 bytes
  * provides a comfortable margin.
  *
  * TODO(phase-4): Replace with:

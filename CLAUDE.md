@@ -1,32 +1,39 @@
 You are building production firmware for a BACnet MS/TP ↔ BACnet/IP bridge running on a
-WIZnet W5500-EVB-Pico-PoE (RP2040 + W5500 hardwired TCP/IP). The project is at
+WIZnet W5500-EVB-Pico2 (RP2350A + W5500 hardwired TCP/IP). The project is at
 https://github.com/fishloa/micro-bacnet-bridge. Begin by reading the entire repo, then
 plan before writing any code.
 
 ## Hardware
 
-- RP2040 dual-core Cortex-M0+ @ 133MHz, 264KB SRAM, 2MB flash
-- W5500 hardwired TCP/IP via SPI1 (GPIO16–21, internal)
+### Target board: WIZnet W5500-EVB-Pico2
+- RP2350A dual-core Cortex-M33 @ 150MHz, 520KB SRAM, 4MB flash
+- W5500 hardwired TCP/IP via SPI0 (GPIO16–21, internal)
 - SP3485 RS-485 transceiver on UART1 (GPIO4=TX, GPIO5=RX, GPIO3=DE/RE direction)
 - WIZPoE-P1 PoE module, 802.3af, powers board via RJ45
 - No OS. **Hybrid Rust + C firmware:**
   - Core 0: Rust (embassy-rs) — networking, HTTP, BACnet/IP, mDNS, DHCP, bridge logic
   - Core 1: C (bacnet-stack) — MS/TP master state machine (timing critical)
 
+### Debug probe: WIZnet W5500-EVB-Pico-PoE (RP2040)
+- Flashed with debugprobe firmware, connected to Mac via USB
+- SWD wiring: probe GPIO2→target SWCLK pad, probe GPIO3→target SWDIO pad, GND→GND
+- Optional serial passthrough: probe GPIO5 (RX)←target GPIO0 (TX), probe GPIO4 (TX)→target GPIO1 (RX)
+- Use `probe-rs run --chip RP2350` or `probe-rs attach --chip RP2350` for flash/debug
+
 ## Toolchain & build environment
 
 All build tools run on the CI runner (Ubuntu), never on the device:
-- Rust (thumbv6m-none-eabi target) + embassy-rs: Core 0 firmware
+- Rust (thumbv8m.main-none-eabihf target) + embassy-rs: Core 0 firmware
 - arm-none-eabi-gcc: compiles C bacnet-stack (linked into Rust binary via `cc` crate)
 - Cargo: builds Rust + links C static library → ELF → uf2 via elf2uf2-rs
 - Bun + SvelteKit: compiles frontend to static HTML/CSS/JS (use bun everywhere
   npm would otherwise be used — bun install, bun run build, bunx svelte-kit etc)
 - Python: embeds gzip'd frontend assets for Rust `include_bytes!`
 - bacpypes3 (Python): runs simulated BACnet devices for integration testing
-The RP2040 runs only the compiled firmware binary. No runtime interpreters.
+The RP2350A runs only the compiled firmware binary. No runtime interpreters.
 
 ### Key Rust crates
-- `embassy-rp` — RP2040 HAL (SPI, UART, GPIO, Flash, multicore, timers)
+- `embassy-rp` — RP2350A HAL (SPI, UART, GPIO, Flash, multicore, timers)
 - `embassy-net` + `embassy-net-wiznet` — TCP/IP stack + W5500 MACRAW driver
 - `picoserve` — HTTP server with routing, JSON, SSE, static file serving (no_std)
 - `serde` + `serde_json_core` — JSON serialization (no_std, no alloc)
@@ -161,7 +168,7 @@ micro-bacnet-bridge/
 ├── Cargo.toml                  # Rust workspace root
 ├── build.rs                    # cc crate: compile bacnet-stack → libbacknet.a
 ├── .cargo/
-│   └── config.toml             # thumbv6m-none-eabi target, elf2uf2-rs runner
+│   └── config.toml             # thumbv8m.main-none-eabihf target, elf2uf2-rs runner
 ├── src/                        # Rust firmware (Core 0)
 │   ├── main.rs                 # Embassy entry, spawn async tasks
 │   ├── bacnet_ffi.rs           # FFI bindings to C bacnet-stack
@@ -215,15 +222,15 @@ micro-bacnet-bridge/
 All steps run on ubuntu-latest. Use bun for frontend, cargo for firmware.
 
 ### build.yml (on every push/PR)
-1. Install Rust toolchain + thumbv6m-none-eabi target + elf2uf2-rs
+1. Install Rust toolchain + thumbv8m.main-none-eabihf target + elf2uf2-rs
 2. Install arm-none-eabi-gcc (for C bacnet-stack compilation via cc crate)
-3. Install bun (use oven-sh/setup-bun@v1 action)
+3. Install bun (use oven-sh/setup-bun@v2 action)
 4. bun install && bun run build in frontend/ (produces static assets)
 5. python embed_assets.py (gzip assets → assets/*.gz for include_bytes!)
-6. cargo build --release --target thumbv6m-none-eabi (produces .uf2)
-7. Run Rust unit tests (cargo test, host target) + C unit tests (Unity)
+6. cargo build --release (target from .cargo/config.toml: thumbv8m.main-none-eabihf)
+7. Run Rust unit tests (cargo test -p bridge-core, host target)
 8. Run bacpypes3 integration tests against BACnet simulator
-9. Upload .uf2 as build artifact
+9. Upload .elf + .uf2 as build artifacts
 
 ### release.yml (on tag v*)
 1. Full build as above
@@ -262,15 +269,15 @@ Integration tests (Python/bacpypes3, on CI runner):
 - `clang-format` enforced for C files in csrc/
 - No dynamic allocation: Rust `#![no_std]` with `heapless`, C all-static
 - Rust public APIs documented with `///` doc comments, C with Doxygen
-- README: hardware setup, wiring diagram (RP2040 ↔ SP3485 pins),
+- README: hardware setup, wiring diagram (RP2350A ↔ SP3485 pins),
   build instructions, flash instructions, first-boot setup,
   mDNS discovery (open browser to http://bacnet-bridge.local),
   API reference link, vendor credit (Icomb Place)
 
 ## Constraints
 
-- Total flash budget: firmware ≤ 1.5MB, web assets ≤ 400KB gzip compressed
-- RAM budget: leave 64KB headroom, document static allocation map
+- Total flash budget: firmware ≤ 3MB, web assets ≤ 400KB gzip compressed (4MB flash total)
+- RAM budget: leave 128KB headroom, document static allocation map (520KB SRAM total)
 - No third-party cloud dependencies — fully local
 - All credentials stored as bcrypt hashes, never plaintext
 - HTTP only (no TLS) — device is on trusted LAN

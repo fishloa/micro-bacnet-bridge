@@ -1,6 +1,6 @@
 /**
  * @file mstp_port.c
- * @brief RP2040 UART1 + SP3485 RS-485 hardware interface for BACnet MS/TP.
+ * @brief RP2350A UART1 + SP3485 RS-485 hardware interface for BACnet MS/TP.
  *
  * Provides the low-level byte I/O and timing primitives required by the
  * bacnet-stack MS/TP state machine.  All register accesses are direct (no
@@ -27,8 +27,8 @@
 #include "bacnet_bridge.h"
 
 /* --------------------------------------------------------------------------
- * RP2040 peripheral base addresses
- * (RP2040 datasheet §2.4, §4.2)
+ * RP2350A peripheral base addresses
+ * (RP2350A datasheet §2.4, §4.2)
  * -------------------------------------------------------------------------- */
 
 /** UART1 register base address. */
@@ -48,7 +48,7 @@
 
 /* --------------------------------------------------------------------------
  * UART1 register offsets
- * (PL011 UART, RP2040 datasheet §4.2.8)
+ * (PL011 UART, RP2350A datasheet §4.2.8)
  * -------------------------------------------------------------------------- */
 
 #define UART_DR_OFFSET      0x000u   /**< Data register (RX/TX). */
@@ -151,7 +151,7 @@
  * Clock constants
  * -------------------------------------------------------------------------- */
 
-/** RP2040 system clock frequency in Hz (configured at 133 MHz in embassy-rp). */
+/** RP2350A system clock frequency in Hz (configured at 133 MHz in embassy-rp). */
 #define SYS_CLK_HZ  133000000u
 
 /* --------------------------------------------------------------------------
@@ -400,9 +400,9 @@ void mstp_port_put_byte(uint8_t byte)
  * -------------------------------------------------------------------------- */
 
 /**
- * @brief Return the raw microsecond timestamp from the RP2040 TIMER peripheral.
+ * @brief Return the raw microsecond timestamp from the RP2350A TIMER peripheral.
  *
- * The RP2040 TIMER peripheral contains a 64-bit free-running counter clocked
+ * The RP2350A TIMER peripheral contains a 64-bit free-running counter clocked
  * at 1 MHz.  The lower 32 bits (TIMERAWL) give a microsecond count that rolls
  * over after ~71.6 minutes.  This raw value should be used for silence-timer
  * arithmetic (H1 fix): compute elapsed time as

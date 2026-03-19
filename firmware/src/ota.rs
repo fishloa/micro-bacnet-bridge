@@ -11,11 +11,11 @@
 //! erasing or writing flash the device will boot into a partially-written
 //! image and will not start.  A future revision should implement A/B
 //! partitioning: write the new image to the second half of flash, verify it,
-//! then copy it over (or use the RP2040 bootrom's `REBOOT_TO_ADDR` facility).
+//! then copy it over (or use the RP2350A bootrom's `REBOOT_TO_ADDR` facility).
 //!
 //! # Flash layout
 //!
-//! The RP2040 maps its 2 MB QSPI flash at XIP address `0x10000000`.  The
+//! The RP2350A maps its 4 MB QSPI flash at XIP address `0x10000000`.  The
 //! first 256 bytes (`0x10000000`–`0x100000FF`) are the second-stage
 //! bootloader (boot2), which must survive the update.  Firmware begins at
 //! `0x10000100`; we start erasing/writing there.

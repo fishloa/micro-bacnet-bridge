@@ -16,7 +16,7 @@ use portable_atomic::AtomicU32;
 ///
 /// Core 0 should read this periodically (e.g. every 200 ms) and compare
 /// against the previously observed value.  If the value has not changed for
-/// more than one sample interval, Core 1 has stalled and the RP2040 hardware
+/// more than one sample interval, Core 1 has stalled and the RP2350A hardware
 /// watchdog should be triggered to reset both cores.
 ///
 /// Declared `#[no_mangle]` so the C symbol `core1_heartbeat` resolves here.
@@ -24,14 +24,14 @@ use portable_atomic::AtomicU32;
 /// `AtomicU32` has `repr(transparent)` layout (same as `u32`), so the C side
 /// accessing it as `extern volatile uint32_t core1_heartbeat` sees the same
 /// memory.  Core 1 is the only writer (via `core1_heartbeat++`), which is a
-/// non-atomic load-add-store on Cortex-M0+, but since there is exactly one
+/// non-atomic load-add-store on Cortex-M33, but since there is exactly one
 /// writer and one reader, a torn read is harmless — Core 0 merely sees either
 /// the old or new value.  Relaxed ordering is therefore correct.
 ///
 /// # TODO
 /// - Check `core1_heartbeat` periodically in the Core 0 supervisor task;
-///   if stale for > 200 ms, trigger watchdog reset via RP2040 WATCHDOG_CTRL.
-/// - Enable the RP2040 hardware watchdog in a future phase using
+///   if stale for > 200 ms, trigger watchdog reset via RP2350A WATCHDOG_CTRL.
+/// - Enable the RP2350A hardware watchdog in a future phase using
 ///   `embassy_rp::watchdog::Watchdog` with a 500 ms window; Core 0 feeds
 ///   the watchdog only when Core 1's heartbeat is live.
 #[no_mangle]

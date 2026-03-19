@@ -89,15 +89,15 @@ pub static MAC_ADDR_LO: AtomicU32 = AtomicU32::new(0);
 // ---------------------------------------------------------------------------
 
 /// Number of concurrent HTTP connections.
-/// RP2350 has 520 KB SRAM; 8 workers at ~10 KB each is well within budget.
-pub const WEB_TASK_POOL_SIZE: usize = 8;
+/// 4 workers × 6 KB each = 24 KB for HTTP buffers.
+pub const WEB_TASK_POOL_SIZE: usize = 4;
 
 /// Per-connection TCP receive buffer.
-const TCP_RX_BUF: usize = 2048;
+const TCP_RX_BUF: usize = 1024;
 /// Per-connection TCP transmit buffer.
-const TCP_TX_BUF: usize = 4096;
+const TCP_TX_BUF: usize = 2048;
 /// picoserve HTTP parse/body buffer.
-const HTTP_BUF: usize = 4096;
+const HTTP_BUF: usize = 2048;
 
 // ---------------------------------------------------------------------------
 // picoserve server configuration

@@ -1,6 +1,6 @@
 //! Bridge state: discovered BACnet devices and their points.
 //!
-//! This module is platform-independent and compiles on both the RP2040 target
+//! This module is platform-independent and compiles on both the RP2350A target
 //! and the host (for unit testing). It contains no hardware or embassy
 //! dependencies.
 //!
@@ -21,10 +21,10 @@ use heapless::String;
 // ---------------------------------------------------------------------------
 
 /// Maximum number of BACnet devices tracked simultaneously.
-pub const MAX_DEVICES: usize = 16;
+pub const MAX_DEVICES: usize = 8;
 
 /// Maximum number of points (objects) tracked per device.
-pub const MAX_POINTS_PER_DEVICE: usize = 128;
+pub const MAX_POINTS_PER_DEVICE: usize = 64;
 
 // ---------------------------------------------------------------------------
 // DeviceEntry

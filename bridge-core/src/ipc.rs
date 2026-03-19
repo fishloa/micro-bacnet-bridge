@@ -2,8 +2,8 @@
 //!
 //! The ring buffer is an SPSC (single-producer, single-consumer) design using
 //! volatile reads/writes for index synchronisation. This avoids any dependency
-//! on `portable_atomic` (which doesn't support thumbv6m) while remaining
-//! correct when used strictly as SPSC across the two RP2040 cores.
+//! on `portable_atomic` while remaining correct when used strictly as SPSC
+//! across the two RP2350A cores.
 //!
 //! **Safety contract**: `push` must only be called from one core/context and
 //! `pop` from the other. Violating this is undefined behaviour.

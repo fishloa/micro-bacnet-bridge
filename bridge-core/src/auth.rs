@@ -70,7 +70,7 @@ pub fn hash_token(token: &[u8]) -> [u8; 32] {
 ///
 /// Computes `SHA256(salt || password_utf8)` and writes the result into `digest`.
 /// The caller is responsible for generating a random `salt` (e.g. from the
-/// RP2040 ROSC entropy source) and storing it together with `digest` in the
+/// RP2350A ROSC entropy source) and storing it together with `digest` in the
 /// 64-byte `password_hash` field: bytes `[0..32]` = salt, bytes `[32..64]` = digest.
 pub fn hash_password(password: &str, salt: &[u8; 32], digest: &mut [u8; 32]) {
     // Build a stack buffer: salt (32 bytes) || password (max 64 bytes) = max 96 bytes.

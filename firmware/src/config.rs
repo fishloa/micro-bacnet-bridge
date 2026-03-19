@@ -69,18 +69,17 @@ impl ConfigManager {
         Some(mac)
     }
 
-    /// Save MAC address to the identity sector. Only writes once — if the magic
-    /// is already present, this is a no-op (MAC is immutable after first boot).
-    pub fn save_mac(&mut self, mac: &[u8; 6]) {
-        // Check if already written
-        let mut buf = [0u8; 16];
-        if self.flash.blocking_read(IDENTITY_OFFSET, &mut buf).is_ok()
-            && buf[0..4] == IDENTITY_MAGIC
-        {
-            info!("identity: MAC already persisted, skipping write");
-            return;
-        }
+    /// Erase the identity sector (to allow MAC regeneration). Used by factory reset.
+    #[allow(dead_code)]
+    pub fn erase_identity(&mut self) {
+        let _ = self
+            .flash
+            .blocking_erase(IDENTITY_OFFSET, IDENTITY_OFFSET + SECTOR_SIZE as u32);
+        info!("identity: sector erased");
+    }
 
+    /// Save MAC address to the identity sector.
+    pub fn save_mac(&mut self, mac: &[u8; 6]) {
         // Write identity sector: [magic(4)] [mac(6)] [padding(rest)]
         let mut sector = [0xFFu8; SECTOR_SIZE];
         sector[0..4].copy_from_slice(&IDENTITY_MAGIC);
@@ -191,7 +190,7 @@ impl ConfigManager {
     ///
     /// # XIP stall risk (C3)
     ///
-    /// The RP2040 XIP cache is invalidated during flash erase/program operations.
+    /// The RP2350A XIP cache is invalidated during flash erase/program operations.
     /// Any Core 1 code that executes from XIP flash during this window will stall
     /// until the flash operation completes, potentially missing RS-485 byte arrivals
     /// and violating MS/TP timing (one bit at 76800 baud = 13 µs; a flash sector

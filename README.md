@@ -1,6 +1,6 @@
 # micro-bacnet-bridge
 
-BACnet MS/TP to BACnet/IP bridge running on WIZnet W5500-EVB-Pico-PoE (RP2040) or W5500-EVB-Pico2 (RP2350).
+BACnet MS/TP to BACnet/IP bridge running on WIZnet W5500-EVB-Pico2 (RP2350A).
 
 Hybrid Rust + C firmware: embassy-rs async networking on Core 0, bacnet-stack MS/TP master on Core 1.
 
@@ -22,17 +22,30 @@ Point values update in real time via Server-Sent Events. Changed values flash gr
 |---------------------|---------------|
 | ![Points](docs/screenshots/points-config.png) | ![Status](docs/screenshots/status.png) |
 
-## Supported Hardware
+## Hardware
 
 | Board | MCU | RAM | Flash | Target |
 |-------|-----|-----|-------|--------|
-| W5500-EVB-Pico-PoE | RP2040 (Cortex-M0+ @ 133 MHz) | 264 KB | 2 MB | `thumbv6m-none-eabi` |
-| W5500-EVB-Pico2 | RP2350 (Cortex-M33 @ 150 MHz) | 520 KB | 4 MB | `thumbv8m.main-none-eabihf` |
+| W5500-EVB-Pico2 | RP2350A (Cortex-M33 @ 150 MHz) | 520 KB | 4 MB | `thumbv8m.main-none-eabihf` |
 
-Both boards share the same pin mapping:
+Pin mapping:
 - **Ethernet:** W5500 hardwired TCP/IP via SPI0 (GPIO16-21)
 - **RS-485:** SP3485 transceiver on UART1 (GPIO4=TX, GPIO5=RX, GPIO3=DE/RE)
 - **Power:** 802.3af PoE via RJ45
+
+### SWD Debugging
+
+Use a WIZnet W5500-EVB-Pico-PoE (RP2040) flashed with [debugprobe](https://github.com/raspberrypi/debugprobe/releases) firmware as a debug probe:
+
+| Signal | Probe (RP2040) | Target (RP2350A) |
+|--------|---------------|-----------------|
+| SWCLK | GPIO2 | SWCLK test pad |
+| SWDIO | GPIO3 | SWDIO test pad |
+| GND | GND | GND |
+
+```bash
+probe-rs run --chip RP2350 target/thumbv8m.main-none-eabihf/release/firmware
+```
 
 ## Architecture
 
@@ -68,7 +81,6 @@ Core 0 (Rust / embassy-rs)           Core 1 (C / bacnet-stack)
 - **DHCP + static IP** — auto-config with flash-persisted fallback
 - **REST API** — full OpenAPI 3.1 spec at `/api/v1`
 - **Engineering units** — 100+ BACnet unit codes mapped to HA unit strings with conversion
-- **Dual board support** — Pico (RP2040) and Pico2 (RP2350) from same codebase
 - **PoE powered** — single RJ45 cable for power + network
 - **No cloud dependencies** — fully local operation
 
@@ -80,7 +92,7 @@ Firmware version format: `major.minor.build-board`
 - **build** auto-incremented by CI (`GITHUB_RUN_NUMBER`)
 - **board** target platform (`pico` or `pico2`)
 
-Examples: `0.1.42-pico`, `0.1.42-pico2`, `0.1.0-pico` (local build)
+Examples: `0.1.42-pico2`, `0.1.0-pico2` (local build)
 
 Version is exposed in: mDNS TXT records, `/api/v1/system/status`, SNMP sysDescr, startup log.
 
@@ -90,8 +102,7 @@ Version is exposed in: mDNS TXT records, `/api/v1/system/status`, SNMP sysDescr,
 
 ```bash
 # Rust toolchain
-rustup target add thumbv6m-none-eabi        # Pico (RP2040)
-rustup target add thumbv8m.main-none-eabihf  # Pico2 (RP2350)
+rustup target add thumbv8m.main-none-eabihf
 cargo install elf2uf2-rs
 
 # C cross-compiler
@@ -111,27 +122,21 @@ cd frontend && bun install && bun run build && cd ..
 # Embed web assets into firmware
 python3 tools/embed_assets.py
 
-# Build for Pico (RP2040) — default
-cargo build -p firmware --release --target thumbv6m-none-eabi
-
-# Build for Pico2 (RP2350)
-cargo build -p firmware --release --target thumbv8m.main-none-eabihf \
-  --features board-pico2 --no-default-features
+# Build firmware (target from .cargo/config.toml: thumbv8m.main-none-eabihf)
+cargo build -p firmware --release
 
 # Convert to UF2
-elf2uf2-rs target/thumbv6m-none-eabi/release/firmware micro-bacnet-bridge-pico.uf2
+elf2uf2-rs target/thumbv8m.main-none-eabihf/release/firmware micro-bacnet-bridge.uf2
 ```
 
 ### Development (no hardware needed)
 
 ```bash
-# Run 287 bridge-core unit tests on Mac
+# Run bridge-core unit tests on Mac
 cargo test -p bridge-core
 
-# Check firmware compiles for both boards
-cargo check -p firmware --target thumbv6m-none-eabi
-cargo check -p firmware --target thumbv8m.main-none-eabihf \
-  --features board-pico2 --no-default-features
+# Check firmware compiles
+cargo check -p firmware
 
 # Run frontend dev server with mock data + SSE
 cd frontend && bun run dev
@@ -175,14 +180,14 @@ micro-bacnet-bridge/
 ├── bridge-core/        # no_std Rust library (testable on host, 287 tests)
 │   └── src/            # BACnet types, NPDU, mDNS, NTP, SNMP, MQTT, Syslog,
 │                       # config, IPC, engineering units, OTA validation
-├── firmware/           # RP2040/RP2350 embassy binary
+├── firmware/           # RP2350A embassy binary
 │   └── src/            # HTTP, SSE, mDNS, BACnet/IP, NTP, SNMP, MQTT,
 │                       # Syslog, DNS, OTA, flash config, Core 1 launch
 ├── csrc/               # C code for Core 1 MS/TP
 ├── frontend/           # SvelteKit admin UI (Verdant UI design system)
 ├── tools/              # embed_assets.py, generate_docs.sh, pre-commit
 ├── docs/               # OpenAPI spec, screenshots
-└── .github/workflows/  # CI matrix (Pico + Pico2), tests, clippy, fmt
+└── .github/workflows/  # CI build, tests, clippy, fmt, release
 ```
 
 ## API Documentation

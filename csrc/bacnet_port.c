@@ -1,12 +1,12 @@
 /**
  * @file bacnet_port.c
- * @brief bacnet-stack platform adaptation layer for the RP2040.
+ * @brief bacnet-stack platform adaptation layer for the RP2350A.
  *
  * bacnet-stack expects certain platform-specific functions to be provided by
  * the port.  This file supplies the minimum set required for the MS/TP master
  * state machine running on Core 1.
  *
- * Functions that are no-ops (because the RP2040 timer is managed entirely
+ * Functions that are no-ops (because the RP2350A timer is managed entirely
  * through mstp_port.c) are documented as such.  Functions that require
  * bacnet-stack headers are tagged with TODO markers indicating where
  * full integration will occur in a subsequent implementation phase.
@@ -35,7 +35,7 @@
  */
 
 /* --------------------------------------------------------------------------
- * RP2040 UART1 register access (duplicated subset from mstp_port.c)
+ * RP2350A UART1 register access (duplicated subset from mstp_port.c)
  *
  * These are the minimal definitions needed by RS485_Send_Frame to poll the
  * UART flag register before de-asserting the RS-485 driver-enable pin (C4).
@@ -56,19 +56,19 @@
  *
  * bacnet-stack/src/bacnet/basic/sys/mstimer.c (and similar) calls
  * timer_milliseconds() to get the current time.  The function is delegated
- * to mstp_port_timer_ms() which reads the RP2040 hardware timer directly.
+ * to mstp_port_timer_ms() which reads the RP2350A hardware timer directly.
  * -------------------------------------------------------------------------- */
 
 /**
  * @brief Initialise the platform millisecond timer.
  *
- * No-op on the RP2040: the TIMER peripheral runs continuously from power-on
+ * No-op on the RP2350A: the TIMER peripheral runs continuously from power-on
  * and does not require software initialisation.  mstp_port_init() is the
  * correct place for any hardware setup that affects timing.
  */
 void timer_init(void)
 {
-    /* No initialisation required — RP2040 TIMER runs from power-on. */
+    /* No initialisation required — RP2350A TIMER runs from power-on. */
 }
 
 /**

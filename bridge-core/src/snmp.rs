@@ -1407,7 +1407,7 @@ mod tests {
         }
         let mut val_bytes: Vec<u8, 64> = Vec::new();
         // 64-byte description string
-        for b in b"BACnet Bridge v0.2.0 (Icomb Place) - RP2040 W5500-EVB-Pico-PoE" {
+        for b in b"BACnet Bridge v0.2.0 (Icomb Place) - RP2350A W5500-EVB-Pico2" {
             val_bytes.push(*b).unwrap();
         }
         let vb = VarBind {

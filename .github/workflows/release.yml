@@ -29,7 +29,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-          targets: thumbv6m-none-eabi
+          targets: thumbv8m.main-none-eabihf
 
       # ── Cargo cache ─────────────────────────────────────────────────────────
       - name: Cache cargo registry
@@ -81,7 +81,7 @@ jobs:
 
       # ── Firmware build ────────────────────────────────────────────────────────
       - name: Build firmware (release)
-        run: cargo build -p firmware --release --target thumbv6m-none-eabi
+        run: cargo build -p firmware --release
 
       # ── ELF → UF2 ────────────────────────────────────────────────────────────
       - name: Install elf2uf2-rs
@@ -90,7 +90,7 @@ jobs:
       - name: Convert ELF to UF2
         run: |
           VERSION="${GITHUB_REF_NAME}"   # e.g. v0.1.0
-          ELF="target/thumbv6m-none-eabi/release/firmware"
+          ELF="target/thumbv8m.main-none-eabihf/release/firmware"
           UF2="target/micro-bacnet-bridge-${VERSION}.uf2"
           elf2uf2-rs "$ELF" "$UF2"
           echo "UF2_PATH=$UF2" >> "$GITHUB_ENV"

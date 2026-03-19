@@ -279,7 +279,7 @@ void core1_entry(void);
 /**
  * @brief Initialise the bacnet-stack millisecond timer.
  *
- * No-op on RP2040 — the timer is managed by mstp_port_timer_ms().
+ * No-op on RP2350A — the timer is managed by mstp_port_timer_ms().
  */
 void timer_init(void);
 

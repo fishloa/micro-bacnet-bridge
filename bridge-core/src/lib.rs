@@ -2,7 +2,7 @@
 
 //! `bridge-core`: platform-independent BACnet MS/TP ↔ BACnet/IP bridge logic.
 //!
-//! This crate compiles for both the RP2040 target (`thumbv6m-none-eabi`) and
+//! This crate compiles for both the RP2350A target (`thumbv8m.main-none-eabihf`) and
 //! the host (macOS/Linux) for unit testing. It has **no** hardware dependencies
 //! and uses only `heapless`, `serde`, and `serde-json-core` — no `alloc`, no `std`.
 //!
