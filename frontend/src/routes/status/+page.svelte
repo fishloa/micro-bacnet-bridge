@@ -135,7 +135,7 @@
 			</div>
 		</div>
 
-		<div class="vui-card vui-animate-fade-in" style="margin-top: var(--vui-space-lg);">
+		<div class="vui-card vui-animate-fade-in mt-lg">
 			<div class="vui-section-header">MS/TP Statistics</div>
 			<div class="stat-row">
 				<span class="text-sub">Frames Sent</span>
@@ -147,16 +147,16 @@
 			</div>
 		</div>
 
-		<div style="margin-top: var(--vui-space-lg);">
+		<div class="mt-lg">
 			<button class="vui-btn vui-btn-danger" onclick={reboot}>
 				Reboot Device
 			</button>
 		</div>
 
 		<!-- OTA Firmware Update -->
-		<div class="vui-card vui-animate-fade-in" style="margin-top: var(--vui-space-lg);">
+		<div class="vui-card vui-animate-fade-in mt-lg">
 			<div class="vui-section-header">Firmware Update</div>
-			<p class="text-sub" style="margin-bottom: var(--vui-space-md);">
+			<p class="text-sub card-description">
 				Upload a <code>.bin</code> or <code>.uf2</code> firmware file. Format is auto-detected.
 				The device will reboot automatically after the upload completes.
 			</p>
@@ -206,7 +206,7 @@
 			</p>
 		</div>
 	{:else}
-		<div class="vui-skeleton" style="height: 200px; border-radius: var(--vui-radius-md);"></div>
+		<div class="vui-skeleton skeleton-tall"></div>
 	{/if}
 </div>
 
@@ -216,10 +216,14 @@
 		height: 100%;
 		overflow-y: auto;
 	}
-	h1 {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-bold);
-		margin-bottom: var(--vui-space-lg);
+
+	.skeleton-tall {
+		height: 200px;
+		border-radius: var(--vui-radius-md);
+	}
+
+	.card-description {
+		margin-bottom: var(--vui-space-md);
 	}
 	.status-grid {
 		display: grid;

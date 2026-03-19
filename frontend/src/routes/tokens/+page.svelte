@@ -120,7 +120,7 @@
 	<!-- Tokens table -->
 	<div class="vui-card">
 		{#if loading}
-			<div class="vui-skeleton" style="height: 80px;"></div>
+			<div class="vui-skeleton skeleton-sm"></div>
 		{:else}
 			<table>
 				<thead>
@@ -128,7 +128,7 @@
 						<th>Name</th>
 						<th>Role</th>
 						<th>Created By</th>
-						<th style="width: 80px"></th>
+						<th class="th-action"></th>
 					</tr>
 				</thead>
 				<tbody>
@@ -152,7 +152,7 @@
 						</tr>
 					{:else}
 						<tr>
-							<td colspan="4" class="text-sub" style="text-align: center; padding: var(--vui-space-lg);">
+							<td colspan="4" class="text-sub empty-row">
 								No API tokens. Create one to enable programmatic access.
 							</td>
 						</tr>
@@ -173,15 +173,16 @@
 		gap: var(--vui-space-lg);
 	}
 
-	h1 {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-bold);
+	.skeleton-sm {
+		height: 80px;
 	}
 
-	.page-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
+	.empty-row {
+		text-align: center;
+		padding: var(--vui-space-lg);
+	}
+	.th-action {
+		width: 80px;
 	}
 
 	.token-reveal {

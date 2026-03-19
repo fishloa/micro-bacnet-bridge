@@ -66,9 +66,6 @@
 		disconnectSSE?.();
 	});
 
-	function deviceOnlineClass(dev: BacnetDevice): string {
-		return dev.online ? 'device-online' : 'device-offline';
-	}
 </script>
 
 <svelte:head>
@@ -106,122 +103,6 @@
 		flex: 1;
 		overflow: hidden;
 	}
-
-	/* ---- Sidebar ---- */
-	.device-sidebar {
-		width: 220px;
-		flex-shrink: 0;
-		display: flex;
-		flex-direction: column;
-		border-right: 1px solid var(--vui-border);
-		background: var(--vui-surface-sub, rgba(255,255,255,0.03));
-		overflow-y: auto;
-	}
-
-	.sidebar-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 10px 12px 8px;
-		font-size: var(--vui-text-xs);
-		color: var(--vui-text-muted);
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		font-weight: var(--vui-font-semibold);
-		border-bottom: 1px solid var(--vui-border);
-	}
-
-	.sidebar-title {
-		opacity: 0.7;
-	}
-
-	.device-count {
-		background: var(--vui-accent-dim);
-		border-radius: 10px;
-		padding: 2px 8px;
-		font-size: var(--vui-text-xs);
-		color: var(--vui-accent);
-		font-weight: var(--vui-font-semibold);
-	}
-
-	.device-item {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 10px 12px;
-		cursor: pointer;
-		border: 1px solid transparent;
-		background: transparent;
-		color: var(--vui-text);
-		text-align: left;
-		width: 100%;
-		font-size: var(--vui-text-base);
-		border-bottom: 1px solid var(--vui-border);
-		border-radius: var(--vui-radius-md);
-		transition: background 0.12s;
-	}
-
-	.device-item:hover {
-		background: var(--vui-surface-hover);
-	}
-
-	.device-item.active {
-		background: var(--vui-accent-dim);
-		border: 1px solid var(--vui-accent-border);
-		color: var(--vui-accent);
-	}
-
-	.device-icon {
-		font-size: 14px;
-		opacity: 0.6;
-	}
-
-	.device-status-dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		flex-shrink: 0;
-		background: var(--vui-color-danger, #ef4444);
-	}
-
-	.device-status-dot.online {
-		background: var(--vui-color-success, #22c55e);
-	}
-
-	.device-info {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-	}
-
-	.device-name {
-		font-weight: var(--vui-font-semibold);
-		color: var(--vui-text);
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.device-meta {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-	}
-
-	.device-mac {
-		font-size: var(--vui-text-xs);
-		color: var(--vui-text-sub);
-	}
-
-	.no-devices {
-		padding: 16px 12px;
-		font-size: var(--vui-text-sm);
-		color: var(--vui-text-muted);
-		text-align: center;
-	}
-
-	/* ---- Points area ---- */
 	.points-area {
 		flex: 1;
 		overflow: hidden;

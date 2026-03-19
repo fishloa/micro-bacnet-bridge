@@ -137,7 +137,7 @@
 
 	<!-- TLS status card -->
 	{#if loading}
-		<div class="vui-skeleton" style="height: 80px; border-radius: var(--vui-radius-md);"></div>
+		<div class="vui-skeleton skeleton-sm"></div>
 	{:else if tlsStatus}
 		<div class="vui-card vui-animate-fade-in">
 			<div class="vui-section-header">Status</div>
@@ -147,15 +147,27 @@
 					{tlsStatus.enabled ? 'Enabled' : 'Disabled'}
 				</span>
 			</div>
-			{#if tlsStatus.enabled}
-				<div class="status-row">
-					<span class="text-sub">Certificate CN</span>
-					<span>{tlsStatus.subject}</span>
-				</div>
-				<div class="status-row">
-					<span class="text-sub">Expires</span>
-					<span>{tlsStatus.expiry}</span>
-				</div>
+			{#if tlsStatus.enabled && tlsStatus.subject}
+				<div class="vui-section-header mt-md">Certificate Details</div>
+				<table class="cert-table">
+					<tbody>
+						<tr><td class="cert-label">Subject</td><td>{tlsStatus.subject}</td></tr>
+						<tr><td class="cert-label">Issuer</td><td>{tlsStatus.issuer}</td></tr>
+						<tr><td class="cert-label">Serial Number</td><td>{tlsStatus.serial}</td></tr>
+						<tr><td class="cert-label">Not Before</td><td>{tlsStatus.notBefore}</td></tr>
+						<tr><td class="cert-label">Not After</td><td>{tlsStatus.notAfter}</td></tr>
+						<tr><td class="cert-label">Signature Algorithm</td><td>{tlsStatus.signatureAlgorithm}</td></tr>
+						<tr><td class="cert-label">Public Key Algorithm</td><td>{tlsStatus.publicKeyAlgorithm}</td></tr>
+						<tr><td class="cert-label">Public Key Size</td><td>{tlsStatus.publicKeySize}</td></tr>
+						<tr><td class="cert-label">SHA-256 Fingerprint</td><td>{tlsStatus.fingerprint}</td></tr>
+						{#if tlsStatus.sanNames.length > 0}
+							<tr>
+								<td class="cert-label">Subject Alternative Names</td>
+								<td>{tlsStatus.sanNames.join(', ')}</td>
+							</tr>
+						{/if}
+					</tbody>
+				</table>
 			{/if}
 		</div>
 	{/if}
@@ -163,7 +175,7 @@
 	<!-- Generate CSR -->
 	<div class="vui-card">
 		<div class="vui-section-header">Generate CSR</div>
-		<p class="text-sub" style="margin-bottom: var(--vui-space-md); font-size: var(--vui-text-sm);">
+		<p class="text-sub card-description">
 			Generate a Certificate Signing Request. Submit the CSR to your CA, then upload the signed
 			certificate below.
 		</p>
@@ -181,7 +193,7 @@
 	<!-- Upload Certificate -->
 	<div class="vui-card">
 		<div class="vui-section-header">Upload Certificate</div>
-		<p class="text-sub" style="margin-bottom: var(--vui-space-md); font-size: var(--vui-text-sm);">
+		<p class="text-sub card-description">
 			Upload a PEM-encoded certificate signed by your CA (requires a private key already stored
 			on device, e.g. from a CSR).
 		</p>
@@ -199,7 +211,7 @@
 	<!-- Upload Key + Certificate -->
 	<div class="vui-card">
 		<div class="vui-section-header">Upload Private Key + Certificate</div>
-		<p class="text-sub" style="margin-bottom: var(--vui-space-md); font-size: var(--vui-text-sm);">
+		<p class="text-sub card-description">
 			Upload both the private key and the certificate (e.g. issued by your own CA).
 		</p>
 		<div class="upload-grid">
@@ -218,7 +230,7 @@
 				</label>
 			</div>
 		</div>
-		<button class="vui-btn vui-btn-primary" onclick={uploadKeyAndCert} disabled={!keyFile || !keyFile2 || keyLoading} style="margin-top: var(--vui-space-md);">
+		<button class="vui-btn vui-btn-primary mt-md" onclick={uploadKeyAndCert} disabled={!keyFile || !keyFile2 || keyLoading}>
 			{keyLoading ? 'Uploading…' : 'Upload Both'}
 		</button>
 	</div>
@@ -226,7 +238,7 @@
 	<!-- Self-signed -->
 	<div class="vui-card">
 		<div class="vui-section-header">Generate Self-Signed Certificate</div>
-		<p class="text-sub" style="margin-bottom: var(--vui-space-md); font-size: var(--vui-text-sm);">
+		<p class="text-sub card-description">
 			Generate a self-signed certificate using the device's current hostname. Browsers will
 			show a warning, but connections will be encrypted.
 		</p>
@@ -239,7 +251,7 @@
 	{#if tlsStatus?.enabled}
 		<div class="vui-card">
 			<div class="vui-section-header">Disable TLS</div>
-			<p class="text-sub" style="margin-bottom: var(--vui-space-md); font-size: var(--vui-text-sm);">
+			<p class="text-sub card-description">
 				Disable the HTTPS server and remove the stored certificate and private key.
 				The device will only be accessible over HTTP.
 			</p>
@@ -260,15 +272,14 @@
 		gap: var(--vui-space-lg);
 	}
 
-	h1 {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-bold);
+	.skeleton-sm {
+		height: 80px;
+		border-radius: var(--vui-radius-md);
 	}
 
-	.page-header {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
+	.card-description {
+		margin-bottom: var(--vui-space-md);
+		font-size: var(--vui-text-sm);
 	}
 
 	.status-row {
@@ -277,7 +288,17 @@
 		justify-content: space-between;
 		padding: var(--vui-space-sm) 0;
 		border-bottom: 1px solid var(--vui-border);
-		font-size: var(--vui-text-sm);
+	}
+
+	.cert-table {
+		width: 100%;
+		border-collapse: collapse;
+	}
+	.cert-label {
+		width: 200px;
+		white-space: nowrap;
+		font-weight: var(--vui-font-medium);
+		color: var(--vui-text-sub);
 	}
 
 	.pem-block {

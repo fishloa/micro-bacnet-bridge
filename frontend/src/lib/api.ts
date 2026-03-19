@@ -71,7 +71,15 @@ export interface ApiToken {
 export interface TlsStatus {
 	enabled: boolean;
 	subject: string;
-	expiry: string;
+	issuer: string;
+	serial: string;
+	notBefore: string;
+	notAfter: string;
+	signatureAlgorithm: string;
+	publicKeyAlgorithm: string;
+	publicKeySize: string;
+	fingerprint: string;
+	sanNames: string[];
 }
 
 export interface OtaConfig {
@@ -324,7 +332,15 @@ const MOCK_TOKENS: ApiToken[] = [
 const MOCK_TLS_STATUS: TlsStatus = {
 	enabled: false,
 	subject: '',
-	expiry: '',
+	issuer: '',
+	serial: '',
+	notBefore: '',
+	notAfter: '',
+	signatureAlgorithm: '',
+	publicKeyAlgorithm: '',
+	publicKeySize: '',
+	fingerprint: '',
+	sanNames: [],
 };
 
 const MOCK_NTP_CONFIG: NtpConfig = {

@@ -125,7 +125,7 @@
 
 	<!-- Current version -->
 	{#if loading}
-		<div class="vui-skeleton" style="height: 80px; border-radius: var(--vui-radius-md);"></div>
+		<div class="vui-skeleton skeleton-sm"></div>
 	{:else if status}
 		<div class="vui-card vui-animate-fade-in">
 			<div class="vui-section-header">Current Version</div>
@@ -173,10 +173,10 @@
 			</form>
 
 			{#if updateAvailable}
-				<div class="vui-alert vui-alert-info" style="margin-top: var(--vui-space-md);">
+				<div class="vui-alert vui-alert-info mt-md">
 					<strong>Update available: v{updateAvailable.version}</strong>
 					{#if updateAvailable.releaseNotes}
-						<p style="margin-top: 4px; font-size: var(--vui-text-sm);">{updateAvailable.releaseNotes}</p>
+						<p class="release-notes">{updateAvailable.releaseNotes}</p>
 					{/if}
 				</div>
 			{/if}
@@ -186,7 +186,7 @@
 	<!-- Manual upload -->
 	<div class="vui-card">
 		<div class="vui-section-header">Manual Upload</div>
-		<p class="text-sub" style="margin-bottom: var(--vui-space-md); font-size: var(--vui-text-sm);">
+		<p class="text-sub card-description">
 			Upload a <code>.bin</code> or <code>.uf2</code> firmware file directly.
 			The device will reboot automatically after the upload completes.
 		</p>
@@ -230,9 +230,23 @@
 		gap: var(--vui-space-lg);
 	}
 
-	h1 {
-		font-size: var(--vui-text-xl);
-		font-weight: var(--vui-font-bold);
+	.skeleton-sm {
+		height: 80px;
+		border-radius: var(--vui-radius-md);
+	}
+
+	.card-description {
+		margin-bottom: var(--vui-space-md);
+		font-size: var(--vui-text-sm);
+	}
+
+	.vui-input-group select {
+		max-width: 300px;
+	}
+
+	.release-notes {
+		margin-top: 4px;
+		font-size: var(--vui-text-sm);
 	}
 
 	.version-display {
@@ -306,11 +320,4 @@
 		margin-bottom: var(--vui-space-sm);
 	}
 
-	.ota-warning {
-		font-size: var(--vui-text-xs);
-		color: var(--vui-text-muted);
-		margin-top: var(--vui-space-md);
-		padding-top: var(--vui-space-sm);
-		border-top: 1px solid var(--vui-border);
-	}
 </style>

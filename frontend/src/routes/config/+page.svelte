@@ -105,7 +105,7 @@
 	<div class="page-header">
 		<h1 class="vui-page-title">Configuration</h1>
 		{#if savedMsg}
-			<div class="vui-alert vui-alert-success vui-animate-fade-in" style="padding: 8px 16px; font-size: var(--vui-text-sm);">
+			<div class="vui-alert vui-alert-success vui-animate-fade-in save-alert">
 				{savedMsg}
 			</div>
 		{/if}
@@ -329,9 +329,9 @@
 				</table>
 				{#if mqtt.enabled}
 					<div class="mqtt-points-info">
-						<p style="font-size: var(--vui-text-xs); color: var(--vui-text-sub); line-height: 1.6;">
+						<p class="mqtt-points-text">
 							Per-point MQTT publish control has moved to the
-							<a href="/points" style="color: var(--vui-accent); text-decoration: none; font-weight: var(--vui-font-medium);">Points Config</a>
+							<a href="/points">Points Config</a>
 							page, where you can also set scale, offset, and engineering units for each point.
 						</p>
 					</div>
@@ -492,5 +492,16 @@
 		margin-top: var(--vui-space-md);
 		padding-top: var(--vui-space-md);
 		border-top: 1px solid var(--vui-border);
+	}
+
+	.mqtt-points-text {
+		font-size: var(--vui-text-xs);
+		color: var(--vui-text-sub);
+		line-height: 1.6;
+	}
+
+	.save-alert {
+		padding: 8px 16px;
+		font-size: var(--vui-text-sm);
 	}
 </style>

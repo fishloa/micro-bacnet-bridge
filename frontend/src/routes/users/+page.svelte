@@ -63,13 +63,13 @@
 	</div>
 
 	{#if errorMsg}
-		<div class="vui-alert vui-alert-danger" style="margin-bottom: var(--vui-space-md);" role="alert">
+		<div class="vui-alert vui-alert-danger mb-md" role="alert">
 			{errorMsg}
 		</div>
 	{/if}
 
 	{#if showCreate}
-		<div class="vui-card vui-animate-fade-in" style="margin-bottom: var(--vui-space-lg);">
+		<div class="vui-card vui-animate-fade-in mb-lg">
 			<div class="vui-section-header">New User</div>
 			<form class="create-form" onsubmit={(e) => { e.preventDefault(); createUser(); }}>
 				<div class="vui-input-group">
@@ -98,7 +98,7 @@
 				<tr>
 					<th>Username</th>
 					<th>Role</th>
-					<th style="width: 80px"></th>
+					<th class="th-action"></th>
 				</tr>
 			</thead>
 			<tbody>
@@ -132,6 +132,9 @@
 	}
 	.page-header {
 		justify-content: space-between;
+	}
+	.th-action {
+		width: 80px;
 	}
 	.create-form {
 		display: flex;
