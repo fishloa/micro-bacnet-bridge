@@ -37,7 +37,9 @@
 //! `FLASH_UPDATE` type handle the rest.
 
 use crate::platform::{FIRMWARE_OFFSET, FLASH_SIZE, PROTECTED_OFFSET, SECTOR_SIZE, STAGING_OFFSET};
-use bridge_core::ota::{is_uf2, validate_firmware_image, MAX_FIRMWARE_SIZE};
+use bridge_core::ota::{
+    is_uf2, parse_uf2_block, validate_firmware_image, MAX_FIRMWARE_SIZE, UF2_BLOCK_SIZE,
+};
 use defmt::info;
 use embassy_rp::flash::{Async, Flash};
 use embassy_rp::peripherals::FLASH as FlashPeripheral;
@@ -142,13 +144,23 @@ pub async fn handle_firmware_stream<R: PicoRead>(
         if first_sector {
             first_sector = false;
             if is_uf2(&sector_buf) {
-                return Err("UF2 not supported; upload raw binary");
+                // UF2 detected — switch to UF2 processing mode.
+                // Re-read the rest of the upload as UF2 blocks and write
+                // payloads to the staging area at their target addresses.
+                info!("ota: UF2 format detected");
+                return handle_uf2_stream(
+                    reader,
+                    content_length,
+                    &sector_buf[..sector_data_len],
+                    bytes_received,
+                )
+                .await;
             }
             if !validate_firmware_image(&sector_buf[..8.min(sector_data_len)]) {
                 return Err("Invalid firmware: bad ARM vector table");
             }
             info!(
-                "ota: valid image, writing {} sectors to staging",
+                "ota: raw binary, writing {} sectors to staging",
                 num_sectors
             );
         }
@@ -175,5 +187,133 @@ pub async fn handle_firmware_stream<R: PicoRead>(
     }
 
     info!("ota: {} bytes staged successfully", bytes_received);
+    Ok(())
+}
+
+/// Handle a UF2 upload stream. Called when the first sector contains UF2 magic.
+///
+/// `first_chunk` contains the first bytes already read (up to one sector).
+/// `already_received` is how many bytes have been read so far.
+async fn handle_uf2_stream<R: PicoRead>(
+    reader: &mut R,
+    content_length: usize,
+    first_chunk: &[u8],
+    already_received: usize,
+) -> Result<(), &'static str> {
+    const XIP_BASE: u32 = 0x10000000;
+
+    // UF2 files contain 512-byte blocks. Each block has a 256-byte payload
+    // and a target address. We parse blocks and write payloads to staging.
+    let total_blocks = content_length / UF2_BLOCK_SIZE;
+    info!("ota: UF2 upload, {} blocks expected", total_blocks);
+
+    // Track the highest staging address written so we know how much to erase.
+    // We pre-erase in chunks as needed rather than the whole staging area upfront,
+    // since we don't know the image size from UF2 headers until we see the blocks.
+    let mut highest_erased_sector: i32 = -1;
+    let mut blocks_written = 0u32;
+
+    // Buffer for accumulating one UF2 block (512 bytes)
+    let mut block_buf = [0u8; UF2_BLOCK_SIZE];
+    #[allow(unused_assignments)]
+    let mut block_cursor = 0usize;
+
+    // Seed with first_chunk data
+    let mut remaining = content_length - already_received;
+    let first_len = first_chunk.len().min(UF2_BLOCK_SIZE);
+    block_buf[..first_len].copy_from_slice(&first_chunk[..first_len]);
+    block_cursor = first_len;
+
+    // If first_chunk had more data, we'd need to handle overflow, but
+    // sector_buf is 4KB and UF2 blocks are 512 bytes so first_chunk may
+    // contain multiple blocks.
+    let mut extra_cursor = first_len;
+
+    loop {
+        // Process complete blocks from the current buffer
+        while block_cursor >= UF2_BLOCK_SIZE {
+            let block = &block_buf[..UF2_BLOCK_SIZE];
+            match parse_uf2_block(block) {
+                Ok((target_addr, payload, _block_num, _total)) => {
+                    // Convert XIP address to staging offset
+                    if target_addr < XIP_BASE {
+                        return Err("UF2 block has invalid target address");
+                    }
+                    let flash_offset = target_addr - XIP_BASE;
+                    let staging_addr = STAGING_OFFSET + flash_offset;
+
+                    if staging_addr + payload.len() as u32 > PROTECTED_OFFSET {
+                        return Err("UF2 block would overwrite config area");
+                    }
+
+                    // Erase the sector if not already erased
+                    let sector_num = (staging_addr / SECTOR_SIZE as u32) as i32;
+                    if sector_num > highest_erased_sector {
+                        let erase_addr = sector_num as u32 * SECTOR_SIZE as u32;
+                        let mut fg = FLASH.lock().await;
+                        if let Some(flash) = fg.as_mut() {
+                            if flash
+                                .blocking_erase(erase_addr, erase_addr + SECTOR_SIZE as u32)
+                                .is_err()
+                            {
+                                return Err("Flash erase error during UF2 staging");
+                            }
+                        }
+                        highest_erased_sector = sector_num;
+                    }
+
+                    // Write payload (256 bytes, already page-aligned)
+                    let mut fg = FLASH.lock().await;
+                    if let Some(flash) = fg.as_mut() {
+                        if flash.blocking_write(staging_addr, payload).is_err() {
+                            return Err("Flash write error during UF2 staging");
+                        }
+                    }
+                    blocks_written += 1;
+                }
+                Err(e) => {
+                    info!("ota: UF2 parse error: {}", e);
+                    return Err("Invalid UF2 block");
+                }
+            }
+
+            // Shift remaining data in block_buf
+            let leftover = block_cursor - UF2_BLOCK_SIZE;
+            block_buf.copy_within(UF2_BLOCK_SIZE..block_cursor, 0);
+            block_cursor = leftover;
+        }
+
+        // Process any remaining bytes from first_chunk
+        if extra_cursor < first_chunk.len() {
+            let copy_len = (first_chunk.len() - extra_cursor).min(UF2_BLOCK_SIZE - block_cursor);
+            block_buf[block_cursor..block_cursor + copy_len]
+                .copy_from_slice(&first_chunk[extra_cursor..extra_cursor + copy_len]);
+            block_cursor += copy_len;
+            extra_cursor += copy_len;
+            continue;
+        }
+
+        // Read more data from the network
+        if remaining == 0 {
+            break;
+        }
+        let to_read = remaining.min(UF2_BLOCK_SIZE - block_cursor);
+        match reader
+            .read(&mut block_buf[block_cursor..block_cursor + to_read])
+            .await
+        {
+            Ok(0) => break,
+            Ok(n) => {
+                block_cursor += n;
+                remaining -= n;
+            }
+            Err(_) => return Err("Socket read error during UF2 upload"),
+        }
+    }
+
+    info!(
+        "ota: UF2 complete, {} blocks written to staging",
+        blocks_written
+    );
     Ok(())
 }
