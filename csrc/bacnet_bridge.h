@@ -102,6 +102,41 @@ extern volatile mstp_status_t g_mstp_status;
 extern volatile uint8_t g_flash_pause_request;
 extern volatile uint8_t g_core1_paused;
 
+/**
+ * @brief Check and handle flash pause request. Call from any tight loop on Core 1.
+ *
+ * Must be in .time_critical (SRAM). Disables SIO_IRQ_FIFO so embassy's
+ * flash-resident ISR can't fire, then echoes FIFO tokens for embassy's
+ * pause/resume protocol.
+ */
+static inline __attribute__((section(".time_critical"), always_inline))
+void core1_check_flash_pause(void)
+{
+    if (!g_flash_pause_request) return;
+
+    /* Disable SIO_IRQ_FIFO (IRQ 25) — ISR is in flash */
+    *(volatile uint32_t *)0xE000E180u = (1u << 25);
+    __asm volatile("dsb");
+    __asm volatile("isb");
+
+    g_core1_paused = 1;
+    while (g_flash_pause_request) {
+        /* Echo FIFO tokens for embassy's pause/resume protocol */
+        volatile uint32_t *fifo_st = (volatile uint32_t *)(0xD0000000u + 0x050u);
+        volatile uint32_t *fifo_rd = (volatile uint32_t *)(0xD0000000u + 0x058u);
+        volatile uint32_t *fifo_wr = (volatile uint32_t *)(0xD0000000u + 0x054u);
+        if ((*fifo_st) & 1u) {
+            uint32_t token = *fifo_rd;
+            *fifo_wr = token;
+            __asm volatile("sev");
+        }
+    }
+    g_core1_paused = 0;
+
+    /* Re-enable SIO_IRQ_FIFO */
+    *(volatile uint32_t *)0xE000E100u = (1u << 25);
+}
+
 /* --------------------------------------------------------------------------
  * IPC PDU type tags
  * -------------------------------------------------------------------------- */

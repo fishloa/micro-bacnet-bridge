@@ -74,7 +74,8 @@ extern "C" {
     static g_mstp_status: MstpStatus;
 
     /// Flash pause handshake flags.
-    static mut g_flash_pause_request: u8;
+    #[link_name = "g_flash_pause_request"]
+    pub static mut g_flash_pause_request_raw: u8;
     static g_core1_paused: u8;
 }
 
@@ -87,8 +88,10 @@ extern "C" {
 /// Returns a guard that resumes Core 1 on drop.
 pub fn pause_core1_for_flash() -> FlashPauseGuard {
     unsafe {
-        core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request), 1);
-        let mut timeout = 1_000_000u32;
+        core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request_raw), 1);
+        // Core 1 may be in auto-detect (up to 2s per baud rate × 4 rates = 8s).
+        // At ~150MHz, 150M iterations ≈ 1 second. Wait up to 10 seconds.
+        let mut timeout = 1_500_000_000u32;
         while core::ptr::read_volatile(core::ptr::addr_of!(g_core1_paused)) == 0 && timeout > 0 {
             timeout -= 1;
             cortex_m::asm::nop();
@@ -103,7 +106,7 @@ pub struct FlashPauseGuard(());
 impl Drop for FlashPauseGuard {
     fn drop(&mut self) {
         unsafe {
-            core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request), 0);
+            core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request_raw), 0);
         }
     }
 }

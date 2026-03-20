@@ -66,6 +66,22 @@ static WIZNET_STATE: StaticCell<embassy_net_wiznet::State<4, 4>> = StaticCell::n
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
+    // Copy .time_critical section from flash to SRAM before anything else.
+    // These symbols are defined by the linker script.
+    extern "C" {
+        static mut __stime_critical: u8;
+        static __etime_critical: u8;
+        static __sitime_critical: u8; // source address in flash (LMA)
+    }
+    unsafe {
+        let dst = core::ptr::addr_of_mut!(__stime_critical);
+        let src = core::ptr::addr_of!(__sitime_critical);
+        let len = core::ptr::addr_of!(__etime_critical) as usize - dst as usize;
+        if len > 0 {
+            core::ptr::copy_nonoverlapping(src as *const u8, dst, len);
+        }
+    }
+
     info!(
         "micro-bacnet-bridge starting (Icomb Place firmware v{})",
         env!("FIRMWARE_VERSION")
@@ -288,6 +304,29 @@ async fn net_task(
 fn subnet_mask_to_prefix(mask: [u8; 4]) -> u8 {
     let raw = u32::from_be_bytes(mask);
     raw.leading_ones() as u8
+}
+
+/// Copy firmware from staging to slot 0, then reboot.
+///
+/// This function runs from SRAM (.time_critical) with all interrupts disabled.
+/// It reads each sector from the staging area via XIP, then uses embassy-rp's
+/// Reboot into the OTA staging area using `REBOOT_TYPE_FLASH_UPDATE`.
+///
+/// The RP2350 bootrom natively supports booting from a different flash
+/// region via the `flash_update_boot_window_base` parameter. No manual
+/// copy from staging to slot 0 is needed — the bootrom remaps the
+/// staging area to appear at the firmware's link address (0x10000000).
+///
+/// This function NEVER RETURNS.
+pub fn ota_copy_and_reboot() -> ! {
+    // REBOOT_TYPE_FLASH_UPDATE = 0x4, NO_RETURN_ON_SUCCESS = 0x100
+    // p0 = XIP address of the staging area
+    let staging_xip = 0x10000000u32 + platform::STAGING_OFFSET;
+    info!("ota: rebooting into staging at {:#x}", staging_xip);
+    embassy_rp::rom_data::reboot(0x104, 500, staging_xip, 0);
+    loop {
+        cortex_m::asm::wfi();
+    }
 }
 
 /// Trigger a full system reset via the RP2350 ROM reboot function.

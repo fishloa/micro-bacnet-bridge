@@ -289,6 +289,7 @@ uint32_t mstp_port_auto_detect_baud(void)
         bool got_55 = false;
 
         while ((mstp_port_timer_us() - start) < 2000000u) {
+            core1_check_flash_pause();
             if (!mstp_port_byte_available()) {
                 continue;
             }

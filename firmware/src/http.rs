@@ -427,11 +427,14 @@ impl RequestHandlerService<()> for OtaHandler {
 
         match ota_result {
             Ok(()) => {
-                let _sent = "Firmware update complete. Device is rebooting...\r\n"
-                    .write_to(request.body_connection.finalize().await?, response_writer)
-                    .await?;
-                Timer::after_millis(500).await;
-                crate::system_reset();
+                // OTA succeeded. Reboot into the staging area.
+                if let Ok(conn) = request.body_connection.finalize().await {
+                    let _ = "Firmware update complete. Rebooting...\r\n"
+                        .write_to(conn, response_writer)
+                        .await;
+                }
+                Timer::after_millis(100).await;
+                crate::ota_copy_and_reboot();
             }
             Err(msg) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)

@@ -1,5 +1,5 @@
 MEMORY {
-    FLASH : ORIGIN = 0x10000000, LENGTH = 4096K
+    FLASH : ORIGIN = 0x10000000, LENGTH = 2048K
     RAM   : ORIGIN = 0x20000000, LENGTH = 512K
     SRAM8 : ORIGIN = 0x20080000, LENGTH = 4K
     SRAM9 : ORIGIN = 0x20081000, LENGTH = 4K
@@ -22,6 +22,24 @@ SECTIONS {
 
 /* move .text to start /after/ the boot info */
 _stext = ADDR(.start_block) + SIZEOF(.start_block);
+
+SECTIONS {
+    /* ### Time-critical code — runs from SRAM, loaded from flash.
+     *
+     * Functions marked with __attribute__((section(".time_critical"))) or
+     * #[link_section = ".time_critical.*"] are copied to RAM at startup
+     * so they can execute safely while flash is being erased/programmed.
+     */
+    .time_critical : ALIGN(4)
+    {
+        __stime_critical = .;
+        *(.time_critical .time_critical.*);
+        . = ALIGN(4);
+        __etime_critical = .;
+    } > RAM AT > FLASH
+
+    __sitime_critical = LOADADDR(.time_critical);
+} INSERT BEFORE .data;
 
 SECTIONS {
     /* ### Picotool 'Binary Info' Entries

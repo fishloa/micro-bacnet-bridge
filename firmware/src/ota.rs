@@ -104,87 +104,72 @@ pub async fn handle_firmware_stream<R: PicoRead>(
         return Err("Firmware image exceeds maximum allowed size");
     }
 
-    // Check staging area has room (staging to config region)
-    let staging_limit = (PROTECTED_OFFSET - STAGING_OFFSET) as usize;
-    if content_length > staging_limit {
-        return Err("Firmware image exceeds staging area");
-    }
-
     let num_sectors = (content_length + SECTOR_SIZE - 1) / SECTOR_SIZE;
     let mut sector_buf = [0u8; SECTOR_SIZE];
     let mut bytes_received: usize = 0;
     let mut first_sector = true;
 
-    // NOTE: Core 1 pause is NOT applied during phase 1. The staging area is in
-    // the upper half of flash, which doesn't overlap with running code. Embassy's
-    // in_ram() will briefly pause Core 1 via FIFO for each sector, but Core 1's
-    // SIO_IRQ_FIFO ISR is in flash and the running code section isn't being erased,
-    // so it should be safe. The pause is applied in phase 2 only.
+    // ---- Phase 0: Pre-erase staging area ----
+    info!("ota: pre-erasing staging area ({} sectors)", num_sectors);
+    {
+        let mut fg = FLASH.lock().await;
+        if let Some(flash) = fg.as_mut() {
+            let erase_end = STAGING_OFFSET + (num_sectors * SECTOR_SIZE) as u32;
+            if flash.blocking_erase(STAGING_OFFSET, erase_end).is_err() {
+                return Err("Failed to erase staging area");
+            }
+        } else {
+            return Err("Flash not initialised");
+        }
+    }
+    info!("ota: staging area erased");
 
-    // ---- Phase 1: Stream upload into staging area ----
-    info!(
-        "ota: phase 1: receiving {} bytes into staging area",
-        content_length
-    );
-
+    // ---- Phase 1: Stream upload → write pages to staging ----
+    info!("ota: receiving {} bytes", content_length);
     for sector_idx in 0..num_sectors {
-        let sector_start = sector_idx * SECTOR_SIZE;
-        let sector_end = (sector_start + SECTOR_SIZE).min(content_length);
-        let sector_data_len = sector_end - sector_start;
+        let sector_end = ((sector_idx + 1) * SECTOR_SIZE).min(content_length);
+        let sector_data_len = sector_end - sector_idx * SECTOR_SIZE;
 
-        sector_buf[..SECTOR_SIZE].fill(0xFF); // erased state
-
+        sector_buf[..SECTOR_SIZE].fill(0xFF);
         let mut filled = 0usize;
         while filled < sector_data_len {
             match reader.read(&mut sector_buf[filled..sector_data_len]).await {
-                Ok(0) => {
-                    warn!(
-                        "ota: stream closed early ({}/{})",
-                        bytes_received, content_length
-                    );
-                    return Err("Connection closed before image was fully received");
-                }
+                Ok(0) => return Err("Connection closed before image fully received"),
                 Ok(n) => {
                     filled += n;
                     bytes_received += n;
                 }
-                Err(_) => {
-                    warn!("ota: read error at byte {}", bytes_received);
-                    return Err("Socket read error during upload");
-                }
+                Err(_) => return Err("Socket read error"),
             }
         }
 
-        // Validate first sector
         if first_sector {
             first_sector = false;
             if is_uf2(&sector_buf) {
-                return Err("UF2 upload not supported; upload raw binary");
+                return Err("UF2 not supported; upload raw binary");
             }
             if !validate_firmware_image(&sector_buf[..8.min(sector_data_len)]) {
                 return Err("Invalid firmware: bad ARM vector table");
             }
-            info!("ota: valid image, staging {} sectors", num_sectors);
+            info!(
+                "ota: valid image, writing {} sectors to staging",
+                num_sectors
+            );
         }
 
-        // Write to staging area
+        // Write page to staging (already erased). No custom Core 1 pause needed —
+        // staging area doesn't overlap running code. Embassy's in_ram() handles
+        // the brief multicore pause for the write operation.
         let staging_addr = STAGING_OFFSET + (sector_idx * SECTOR_SIZE) as u32;
         let flash_ok = {
             let mut fg = FLASH.lock().await;
             match fg.as_mut() {
                 None => false,
                 Some(flash) => {
-                    let ok = flash
-                        .blocking_erase(staging_addr, staging_addr + SECTOR_SIZE as u32)
-                        .is_ok();
-                    if ok {
-                        let aligned = (sector_data_len + 255) & !255;
-                        flash
-                            .blocking_write(staging_addr, &sector_buf[..aligned])
-                            .is_ok()
-                    } else {
-                        false
-                    }
+                    let aligned = (sector_data_len + 255) & !255;
+                    flash
+                        .blocking_write(staging_addr, &sector_buf[..aligned])
+                        .is_ok()
                 }
             }
         };
@@ -193,49 +178,7 @@ pub async fn handle_firmware_stream<R: PicoRead>(
         }
     }
 
-    info!("ota: phase 1 complete: {} bytes staged", bytes_received);
-
-    // ---- Phase 2: Copy from staging to firmware slot ----
-    // This overwrites the running firmware. Pause Core 1 first because we're
-    // erasing the lower flash region where code runs. Core 1's SIO_IRQ_FIFO
-    // ISR is in flash and would fault if that region is being erased.
-    info!(
-        "ota: phase 2: copying {} sectors to firmware slot",
-        num_sectors
-    );
-    let _pause = crate::core1::pause_core1_for_flash();
-
-    {
-        let mut fg = FLASH.lock().await;
-        if let Some(flash) = fg.as_mut() {
-            for sector_idx in 0..num_sectors {
-                let src = STAGING_OFFSET + (sector_idx * SECTOR_SIZE) as u32;
-                let dst = FIRMWARE_OFFSET + (sector_idx * SECTOR_SIZE) as u32;
-
-                // Read from staging
-                if flash.blocking_read(src, &mut sector_buf).is_err() {
-                    error!("ota: read-back failed at staging {:#x}", src);
-                    return Err("Flash read error during copy");
-                }
-
-                // Erase destination
-                if flash.blocking_erase(dst, dst + SECTOR_SIZE as u32).is_err() {
-                    error!("ota: erase failed at {:#x}", dst);
-                    return Err("Flash erase error — device may need recovery via probe");
-                }
-
-                // Write to destination
-                if flash.blocking_write(dst, &sector_buf).is_err() {
-                    error!("ota: write failed at {:#x}", dst);
-                    return Err("Flash write error — device may need recovery via probe");
-                }
-            }
-        } else {
-            return Err("Flash not initialised");
-        }
-    }
-
-    info!("ota: phase 2 complete — firmware updated successfully");
+    info!("ota: {} bytes staged successfully", bytes_received);
     Ok(())
 }
 
