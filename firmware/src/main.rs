@@ -258,13 +258,13 @@ async fn main(spawner: Spawner) {
         bridge_config.bacnet.max_master,
     );
 
-    // ---- LED heartbeat ----
-    info!("startup complete; heartbeat running");
+    // LED is controlled by Core 1 (C code) — flashes on Who-Is broadcast.
+    // Core 0 just keeps it on as a "running" indicator, Core 1 toggles it.
+    info!("startup complete");
+    led.set_high();
+    // Main task has nothing else to do — sleep forever.
     loop {
-        led.set_high();
-        Timer::after_millis(100).await;
-        led.set_low();
-        Timer::after_millis(900).await;
+        Timer::after_millis(60_000).await;
     }
 }
 

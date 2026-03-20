@@ -283,6 +283,10 @@ uint32_t mstp_port_auto_detect_baud(void)
     for (uint32_t r = 0; r < num_rates; r++) {
         mstp_port_init(rates[r]);
 
+        /* Send a Who-Is at this baud rate to provoke a response from any
+         * slave device. Use MAC address from config (or default 1). */
+        mstp_send_whois(g_mstp_config.mac_address ? g_mstp_config.mac_address : 1);
+
         /* Listen for ~2 seconds worth of timer ticks.
          * At 133 MHz, TIMER counts at 1 MHz (1 µs per tick). */
         uint32_t start = mstp_port_timer_us();
@@ -457,4 +461,284 @@ __attribute__((section(".time_critical")))
 uint32_t mstp_port_timer_ms(void)
 {
     return mstp_port_timer_us() / 1000u;
+}
+
+/* --------------------------------------------------------------------------
+ * MS/TP CRC functions (BACnet Annex G)
+ * -------------------------------------------------------------------------- */
+
+/** CRC-8 accumulate — used for the MS/TP header CRC. */
+__attribute__((section(".time_critical")))
+static uint8_t mstp_crc8(uint8_t crc, uint8_t byte)
+{
+    uint8_t data = crc ^ byte;
+    for (int i = 0; i < 8; i++) {
+        if (data & 1)
+            data = (data >> 1) ^ 0x8Cu;
+        else
+            data >>= 1;
+    }
+    return data;
+}
+
+/** CRC-16 accumulate — used for the MS/TP data CRC. */
+__attribute__((section(".time_critical")))
+static uint16_t mstp_crc16(uint16_t crc, uint8_t byte)
+{
+    uint8_t low = (uint8_t)(crc & 0xFF) ^ byte;
+    low = low ^ (low << 4);
+    return (crc >> 8) ^ ((uint16_t)low << 8) ^ ((uint16_t)low << 3) ^ ((uint16_t)low >> 4);
+}
+
+/* --------------------------------------------------------------------------
+ * mstp_send_frame — transmit a complete MS/TP frame (internal)
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Transmit a complete MS/TP frame with preamble, header CRC, data, and data CRC.
+ *
+ * Internal to mstp_port.c — callers use mstp_send_whois() or the outbound
+ * PDU path in core1_entry.c which calls RS485_Send_Frame().
+ *
+ * @param frame_type  MS/TP frame type (e.g., 0x05 = BACnet Data Not Expecting Reply)
+ * @param dest        Destination MAC (0xFF = broadcast)
+ * @param src         Source MAC (this station)
+ * @param data        Payload (NPDU + APDU), or NULL if data_len == 0
+ * @param data_len    Payload length in bytes
+ */
+__attribute__((section(".time_critical")))
+static void mstp_send_frame(uint8_t frame_type, uint8_t dest, uint8_t src,
+                            const uint8_t *data, uint16_t data_len)
+{
+    /* Enable transmitter (DE high) */
+    mstp_port_set_direction(true);
+
+    /* Preamble */
+    mstp_port_put_byte(0x55u);
+    mstp_port_put_byte(0xFFu);
+
+    /* Header: frame_type, dest, src, length (big-endian) */
+    uint8_t header[5];
+    header[0] = frame_type;
+    header[1] = dest;
+    header[2] = src;
+    header[3] = (uint8_t)(data_len >> 8);
+    header[4] = (uint8_t)(data_len & 0xFF);
+
+    /* Header CRC (over header bytes) */
+    uint8_t hcrc = 0xFFu;
+    for (int i = 0; i < 5; i++) {
+        mstp_port_put_byte(header[i]);
+        hcrc = mstp_crc8(hcrc, header[i]);
+    }
+    mstp_port_put_byte(~hcrc); /* complement */
+
+    /* Data + data CRC (if any) */
+    if (data_len > 0 && data != ((void *)0)) {
+        uint16_t dcrc = 0xFFFFu;
+        for (uint16_t i = 0; i < data_len; i++) {
+            mstp_port_put_byte(data[i]);
+            dcrc = mstp_crc16(dcrc, data[i]);
+        }
+        dcrc = ~dcrc; /* complement */
+        mstp_port_put_byte((uint8_t)(dcrc & 0xFF));
+        mstp_port_put_byte((uint8_t)(dcrc >> 8));
+    }
+
+    /* Wait for last byte to finish transmitting, then return to receive mode */
+    while (REG(UART1_BASE, UART_FR_OFFSET) & UART_FR_BUSY) {
+        /* Spin. */
+    }
+    mstp_port_set_direction(false);
+}
+
+/* --------------------------------------------------------------------------
+ * mstp_send_whois — broadcast a BACnet Who-Is service request
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Broadcast an unconfirmed Who-Is request on the MS/TP bus.
+ *
+ * Frame type 0x05 = BACnet Data Not Expecting Reply (unconfirmed service).
+ * NPDU: version=1, control=0x00 (no routing, no expecting reply).
+ * APDU: PDU type=0x10 (Unconfirmed-Request), service=0x08 (Who-Is),
+ *       no range parameters (discovers all devices).
+ *
+ * @param src_mac  Source MS/TP MAC address for this node.
+ */
+__attribute__((section(".time_critical")))
+void mstp_send_whois(uint8_t src_mac)
+{
+    /* NPDU (2 bytes) + APDU (2 bytes) = 4 bytes */
+    uint8_t npdu_apdu[4];
+    npdu_apdu[0] = 0x01; /* NPDU version */
+    npdu_apdu[1] = 0x00; /* NPDU control: no DNET/SNET, no reply expected */
+    npdu_apdu[2] = 0x10; /* APDU: Unconfirmed-Request PDU type */
+    npdu_apdu[3] = 0x08; /* Service choice: Who-Is */
+
+    /* Flash LED (GPIO25) briefly to indicate Who-Is broadcast */
+    REG(SIO_BASE, 0x014u) = (1u << 25); /* GPIO_OUT_SET — LED on */
+
+    /* MS/TP frame type 0x05 = BACnet Data Not Expecting Reply, dest=0xFF (broadcast) */
+    mstp_send_frame(0x05, 0xFF, src_mac, npdu_apdu, 4);
+
+    g_mstp_status.frames_tx++;
+
+    /* LED off after transmit */
+    REG(SIO_BASE, 0x018u) = (1u << 25); /* GPIO_OUT_CLR — LED off */
+}
+
+/* --------------------------------------------------------------------------
+ * mstp_receive_check — non-blocking MS/TP frame receive state machine
+ * -------------------------------------------------------------------------- */
+
+/** Receive state machine states */
+#define RX_IDLE         0
+#define RX_PREAMBLE2    1
+#define RX_HEADER       2
+#define RX_HEADER_CRC   3
+#define RX_DATA         4
+#define RX_DATA_CRC1    5
+#define RX_DATA_CRC2    6
+
+static uint8_t rx_state = RX_IDLE;
+static uint8_t rx_header[5];
+static uint8_t rx_header_idx;
+
+/* rx_data must hold up to BACNET_PDU_MAX_DATA (501) bytes of payload plus
+ * one extra slot used temporarily for the CRC low byte during RX_DATA_CRC1.
+ * 512 bytes provides sufficient margin (501 + 1 CRC staging + 10 spare). */
+static uint8_t rx_data[512];
+static uint16_t rx_data_idx;
+static uint16_t rx_data_len;
+
+/**
+ * @brief Non-blocking receive: process available UART bytes through the
+ *        MS/TP frame receive state machine.
+ *
+ * When a complete valid frame is received, pushes it to the mstp_to_ip ring
+ * buffer for Core 0 to process.  The bridge is TRANSPARENT — all BACnet data
+ * frames are forwarded regardless of destination address; the bridge never
+ * consumes frames that are addressed to other nodes.
+ */
+__attribute__((section(".time_critical")))
+void mstp_receive_check(void)
+{
+    while (mstp_port_byte_available()) {
+        uint8_t byte = mstp_port_get_byte();
+
+        switch (rx_state) {
+        case RX_IDLE:
+            if (byte == 0x55u) rx_state = RX_PREAMBLE2;
+            break;
+
+        case RX_PREAMBLE2:
+            if (byte == 0xFFu) {
+                rx_state = RX_HEADER;
+                rx_header_idx = 0;
+            } else if (byte != 0x55u) {
+                rx_state = RX_IDLE;
+            }
+            /* else: repeated 0x55, stay in PREAMBLE2 */
+            break;
+
+        case RX_HEADER:
+            rx_header[rx_header_idx++] = byte;
+            if (rx_header_idx >= 5) {
+                rx_state = RX_HEADER_CRC;
+            }
+            break;
+
+        case RX_HEADER_CRC: {
+            /* Verify header CRC */
+            uint8_t crc = 0xFFu;
+            for (int i = 0; i < 5; i++) crc = mstp_crc8(crc, rx_header[i]);
+            crc = mstp_crc8(crc, byte);
+            if (crc != 0x55u) { /* valid CRC-8 remainder */
+                /* Bad header CRC */
+                g_mstp_status.errors_rx++;
+                rx_state = RX_IDLE;
+                break;
+            }
+            rx_data_len = ((uint16_t)rx_header[3] << 8) | rx_header[4];
+            if (rx_data_len == 0) {
+                /* No data — frame complete (Token, Poll For Master, etc.) */
+                g_mstp_status.frames_rx++;
+                g_mstp_status.bus_active = 1;
+                rx_state = RX_IDLE;
+            } else if (rx_data_len > BACNET_PDU_MAX_DATA) {
+                /* Too large for our PDU — skip */
+                rx_state = RX_IDLE;
+            } else {
+                rx_data_idx = 0;
+                rx_state = RX_DATA;
+            }
+            break;
+        }
+
+        case RX_DATA:
+            rx_data[rx_data_idx++] = byte;
+            if (rx_data_idx >= rx_data_len) {
+                rx_state = RX_DATA_CRC1;
+            }
+            break;
+
+        case RX_DATA_CRC1:
+            /* First byte of 16-bit CRC (low byte) — stage temporarily */
+            rx_data[rx_data_idx] = byte;
+            rx_state = RX_DATA_CRC2;
+            break;
+
+        case RX_DATA_CRC2: {
+            /* Verify data CRC */
+            uint16_t crc = 0xFFFFu;
+            for (uint16_t i = 0; i < rx_data_len; i++) {
+                crc = mstp_crc16(crc, rx_data[i]);
+            }
+            crc = mstp_crc16(crc, rx_data[rx_data_idx]); /* CRC low byte */
+            crc = mstp_crc16(crc, byte);                  /* CRC high byte */
+
+            if (crc != 0xF0B8u) { /* valid CRC-16 remainder */
+                g_mstp_status.errors_rx++;
+                rx_state = RX_IDLE;
+                break;
+            }
+
+            /* Valid frame received */
+            g_mstp_status.frames_rx++;
+            g_mstp_status.bus_active = 1;
+
+            uint8_t frame_type = rx_header[0];
+            uint8_t src_mac    = rx_header[2];
+
+            /* Forward ALL BACnet data frames to Core 0 (bridge is transparent).
+             * Frame type 0x05 = BACnet Data Not Expecting Reply.
+             * Frame type 0x06 = BACnet Data Expecting Reply.
+             * Core 0 snoops I-Am responses to populate the device list but
+             * does NOT consume them — they are still forwarded. */
+            if ((frame_type == 0x05 || frame_type == 0x06) && rx_data_len > 0) {
+                bacnet_pdu_t pdu;
+                pdu.source_net     = 0;
+                pdu.source_mac[0]  = src_mac;
+                pdu.source_mac_len = 1;
+                pdu.dest_net       = 0;
+                pdu.dest_mac[0]    = rx_header[1]; /* dest MAC */
+                pdu.dest_mac_len   = 1;
+                pdu.pdu_type       = PDU_TYPE_MSTP;
+                pdu.data_len       = rx_data_len;
+                for (uint16_t i = 0; i < rx_data_len; i++) {
+                    pdu.data[i] = rx_data[i];
+                }
+                ipc_ring_push(&mstp_to_ip_ring, &pdu);
+            }
+
+            rx_state = RX_IDLE;
+            break;
+        }
+
+        default:
+            rx_state = RX_IDLE;
+            break;
+        }
+    }
 }

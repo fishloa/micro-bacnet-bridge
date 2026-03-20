@@ -58,7 +58,6 @@ extern void     silence_timer_reset(void *pArg);
 /** Default MS/TP MAC address for this node (valid range: 0–127 for masters). */
 #define MSTP_DEFAULT_MAC_ADDRESS    2u
 
-/** Default baud rate in bits per second. */
 /** Shared config written by Rust before Core 1 launch. */
 volatile mstp_config_t g_mstp_config;
 
@@ -121,7 +120,25 @@ static uint8_t mstp_port_opaque[MSTP_PORT_STRUCT_OPAQUE_SIZE] __attribute__((ali
 static bacnet_pdu_t outbound_pdu;
 
 /* --------------------------------------------------------------------------
- * mstp_poll — placeholder MS/TP state machine invocation
+ * Who-Is broadcast timer
+ *
+ * The bridge broadcasts a Who-Is every WHOIS_INTERVAL_US on the MS/TP bus to
+ * discover (and re-discover) devices.  The interval is 10 seconds.
+ * -------------------------------------------------------------------------- */
+
+/** Who-Is broadcast interval in microseconds (10 seconds). */
+#define WHOIS_INTERVAL_US   10000000u
+
+/* --------------------------------------------------------------------------
+ * mstp_poll — MS/TP state machine invocation
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief MS/TP poll: receive any incoming frames.
+ *
+ * Delegates to mstp_receive_check() in mstp_port.c which drives the
+ * frame-level receive state machine and pushes complete frames onto
+ * mstp_to_ip_ring for Core 0.
  *
  * TODO(phase-4): Replace the body of this function with:
  *
@@ -138,25 +155,11 @@ static bacnet_pdu_t outbound_pdu;
  *       // A complete BACnet PDU has been received — push it to Core 0.
  *       mstp_handle_received_frame(port);
  *   }
- * -------------------------------------------------------------------------- */
-
-/**
- * @brief Placeholder MS/TP state machine poll function.
- *
- * Called once per iteration of the Core 1 main loop.  In phase 4 this will
- * drive the bacnet-stack MSTP_Receive_Frame_FSM and MSTP_Master_Node_FSM.
- *
- * Placed in .time_critical so it executes from SRAM, not XIP flash, avoiding
- * stalls if Core 0 performs a flash erase/write while Core 1 is running.
  */
 __attribute__((section(".time_critical")))
 static void mstp_poll(void)
 {
-    /* TODO(phase-4): Implement using bacnet-stack FSM functions.
-     *   RS485_Check_UART_Data(port);
-     *   MSTP_Receive_Frame_FSM(port);
-     *   MSTP_Master_Node_FSM(port);
-     */
+    mstp_receive_check();
 }
 
 /* --------------------------------------------------------------------------
@@ -242,9 +245,6 @@ static void mstp_transmit_outbound(void)
  * flash (e.g. saving config), which would otherwise pause Core 1 mid-frame
  * and violate MS/TP timing constraints (C3 in resilience audit).
  *
- * TODO: Move Core 1 main loop to .time_critical SRAM section for all code
- *       paths that execute during steady-state MS/TP operation.
- *
  * Flash-pause protocol: Core 0 sets g_flash_pause_request before any
  * config-sector erase/write. Core 1 detects this in core1_check_flash_pause()
  * and spins in SRAM (echoing SIO FIFO tokens) until the flag is cleared.
@@ -262,6 +262,7 @@ static void mstp_transmit_outbound(void)
  *   - Increment core1_heartbeat so Core 0 can detect a stalled Core 1 (C2).
  *   - Call mstp_poll() to advance the MS/TP receive and master-node FSMs.
  *   - Call mstp_transmit_outbound() to forward any queued BACnet/IP PDUs.
+ *   - Broadcast Who-Is every WHOIS_INTERVAL_US (10 s) to discover devices.
  *   - Any received MS/TP PDU is pushed to mstp_to_ip_ring inside mstp_poll().
  */
 __attribute__((section(".time_critical")))
@@ -331,6 +332,8 @@ void core1_entry(void)
     uint8_t auto_detect_mode = (g_mstp_config.baud_rate == 0u);
     /* Timestamp of last valid MS/TP frame — for re-scan trigger. */
     uint32_t last_frame_us = mstp_port_timer_us();
+    /* Timestamp of last Who-Is broadcast. */
+    uint32_t last_whois_us = mstp_port_timer_us();
 
     for (;;) {
         core1_check_flash_pause();
@@ -358,6 +361,15 @@ void core1_entry(void)
 
         /* Forward any queued outbound PDUs from Core 0 to RS-485. */
         mstp_transmit_outbound();
+
+        /* Broadcast Who-Is every WHOIS_INTERVAL_US to discover devices. */
+        {
+            uint32_t now_us = mstp_port_timer_us();
+            if ((now_us - last_whois_us) >= WHOIS_INTERVAL_US) {
+                mstp_send_whois(g_mstp_config.mac_address);
+                last_whois_us = now_us;
+            }
+        }
 
         /*
          * NOTE: No sleep or yield here.  Core 1 is dedicated to real-time

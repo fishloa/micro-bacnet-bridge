@@ -372,6 +372,29 @@ uint32_t mstp_port_timer_us(void);
  */
 uint32_t mstp_port_timer_ms(void);
 
+/**
+ * @brief Broadcast an unconfirmed Who-Is request on the MS/TP bus.
+ *
+ * Sends a BACnet Data Not Expecting Reply frame (type 0x05) with an
+ * unconfirmed Who-Is APDU to the broadcast address (0xFF).  Increments
+ * g_mstp_status.frames_tx.
+ *
+ * @param src_mac  Source MS/TP MAC address for this node.
+ */
+void mstp_send_whois(uint8_t src_mac);
+
+/**
+ * @brief Non-blocking MS/TP frame receive state machine.
+ *
+ * Drains the UART1 RX FIFO, advancing the receive state machine one byte
+ * at a time.  When a complete valid frame is received, pushes a bacnet_pdu_t
+ * onto mstp_to_ip_ring for Core 0 to process.  All BACnet data frames are
+ * forwarded (bridge is transparent).
+ *
+ * Must be called from the Core 1 main loop on every iteration.
+ */
+void mstp_receive_check(void);
+
 /* --------------------------------------------------------------------------
  * core1_entry.c — Core 1 entry point
  * -------------------------------------------------------------------------- */
