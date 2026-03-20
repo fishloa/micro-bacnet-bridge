@@ -86,6 +86,11 @@ extern "C" {
 /// `in_ram()` from triggering the flash-resident SIO_IRQ_FIFO ISR on Core 1.
 ///
 /// Returns a guard that resumes Core 1 on drop.
+///
+/// Used by `config::ConfigManager::save` (currently `#[allow(dead_code)]`) for
+/// config-sector writes. Retained here for when the web-UI config save path is
+/// wired up.
+#[allow(dead_code)]
 pub fn pause_core1_for_flash() -> FlashPauseGuard {
     unsafe {
         core::ptr::write_volatile(core::ptr::addr_of_mut!(g_flash_pause_request_raw), 1);
@@ -101,6 +106,7 @@ pub fn pause_core1_for_flash() -> FlashPauseGuard {
 }
 
 /// RAII guard that resumes Core 1 when dropped.
+#[allow(dead_code)]
 pub struct FlashPauseGuard(());
 
 impl Drop for FlashPauseGuard {

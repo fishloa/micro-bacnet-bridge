@@ -26,7 +26,7 @@ Point values update in real time via Server-Sent Events. Changed values flash gr
 
 | Board | MCU | RAM | Flash | Target |
 |-------|-----|-----|-------|--------|
-| W5500-EVB-Pico2 | RP2350A (Cortex-M33 @ 150 MHz) | 520 KB | 4 MB | `thumbv8m.main-none-eabihf` |
+| W5500-EVB-Pico2 | RP2350A (Cortex-M33 @ 150 MHz) | 520 KB | 2 MB | `thumbv8m.main-none-eabihf` |
 
 Pin mapping:
 - **Ethernet:** W5500 hardwired TCP/IP via SPI0 (GPIO16-21)

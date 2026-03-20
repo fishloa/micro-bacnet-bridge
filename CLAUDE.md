@@ -6,7 +6,7 @@ plan before writing any code.
 ## Hardware
 
 ### Target board: WIZnet W5500-EVB-Pico2
-- RP2350A dual-core Cortex-M33 @ 150MHz, 520KB SRAM, 4MB flash
+- RP2350A dual-core Cortex-M33 @ 150MHz, 520KB SRAM, 2MB flash
 - W5500 hardwired TCP/IP via SPI0 (GPIO16–21, internal)
 - SP3485 RS-485 transceiver on UART1 (GPIO4=TX, GPIO5=RX, GPIO3=DE/RE direction)
 - WIZPoE-P1 PoE module, 802.3af, powers board via RJ45
@@ -276,7 +276,7 @@ Integration tests (Python/bacpypes3, on CI runner):
 
 ## Constraints
 
-- Total flash budget: firmware ≤ 3MB, web assets ≤ 400KB gzip compressed (4MB flash total)
+- Total flash budget: firmware ≤ 1MB, web assets ≤ 400KB gzip compressed (2MB flash total)
 - RAM budget: leave 128KB headroom, document static allocation map (520KB SRAM total)
 - No third-party cloud dependencies — fully local
 - All credentials stored as bcrypt hashes, never plaintext

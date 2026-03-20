@@ -20,6 +20,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+/* platform_rp2350.h defines SIO_BASE and other peripheral addresses used by
+ * inline helpers in this header. Include it here so the definitions are
+ * always available regardless of the order headers are included by callers. */
+#include "platform_rp2350.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -122,9 +127,9 @@ void core1_check_flash_pause(void)
     g_core1_paused = 1;
     while (g_flash_pause_request) {
         /* Echo FIFO tokens for embassy's pause/resume protocol */
-        volatile uint32_t *fifo_st = (volatile uint32_t *)(0xD0000000u + 0x050u);
-        volatile uint32_t *fifo_rd = (volatile uint32_t *)(0xD0000000u + 0x058u);
-        volatile uint32_t *fifo_wr = (volatile uint32_t *)(0xD0000000u + 0x054u);
+        volatile uint32_t *fifo_st = (volatile uint32_t *)(SIO_BASE + 0x050u);
+        volatile uint32_t *fifo_rd = (volatile uint32_t *)(SIO_BASE + 0x058u);
+        volatile uint32_t *fifo_wr = (volatile uint32_t *)(SIO_BASE + 0x054u);
         if ((*fifo_st) & 1u) {
             uint32_t token = *fifo_rd;
             *fifo_wr = token;

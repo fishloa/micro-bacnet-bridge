@@ -26,7 +26,7 @@
 #include <stdbool.h>
 
 #include "bacnet_bridge.h"
-#include "platform_rp2350.h"
+/* platform_rp2350.h is already included transitively via bacnet_bridge.h */
 
 /*
  * TODO(phase-4): Uncomment once bacnet-stack include paths are confirmed in
@@ -244,9 +244,12 @@ static void mstp_transmit_outbound(void)
  *
  * TODO: Move Core 1 main loop to .time_critical SRAM section for all code
  *       paths that execute during steady-state MS/TP operation.
- * TODO: Signal Core 1 to enter an SRAM-only pause loop before Core 0 begins
- *       any flash erase/program operation (via a shared flag in ipc_ring_t or
- *       a dedicated control word), then release it after flash ops complete.
+ *
+ * Flash-pause protocol: Core 0 sets g_flash_pause_request before any
+ * config-sector erase/write. Core 1 detects this in core1_check_flash_pause()
+ * and spins in SRAM (echoing SIO FIFO tokens) until the flag is cleared.
+ * OTA staging writes target the upper flash area only and rely on embassy-rp's
+ * built-in multicore safety; no explicit pause is needed for those.
  *
  * Initialisation sequence:
  *   1. Zero the MS/TP port opaque struct.
