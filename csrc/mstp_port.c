@@ -206,9 +206,22 @@ void mstp_port_init(uint32_t baud_rate)
 
     /* -----------------------------------------------------------------------
      * 3. Configure GPIO4 (TX) and GPIO5 (RX) for UART1 function.
+     *
+     * RP2350 pad defaults have IE=0 (input disabled) unlike RP2040.
+     * We must explicitly enable input on GPIO5 (RX) and set pull-up
+     * (RS-485 idle state is mark/high).
      * ---------------------------------------------------------------------- */
     REG(IO_BANK0_BASE, IO_BANK0_GPIO_CTRL(GPIO_UART1_TX)) = IO_BANK0_FUNCSEL_UART;
     REG(IO_BANK0_BASE, IO_BANK0_GPIO_CTRL(GPIO_UART1_RX)) = IO_BANK0_FUNCSEL_UART;
+
+    /* Configure GPIO5 pad: IE=1, Schmitt=1, PUE=1, PDE=0 */
+    /* PADS_BANK0 GPIO5 register = PADS_BANK0_BASE + 0x04 + 5*0x04 = +0x18 */
+    /* Value: IE(bit6)=1 | Schmitt(bit1)=1 | PUE(bit3)=1 = 0x4A */
+    REG(PADS_BANK0_BASE, 0x04u + GPIO_UART1_RX * 0x04u) = (1u << 6) | (1u << 3) | (1u << 1);
+
+    /* Configure GPIO4 pad: IE=0, OD=0 (output enabled for TX) */
+    /* Default should be fine for TX but set explicitly for clarity */
+    REG(PADS_BANK0_BASE, 0x04u + GPIO_UART1_TX * 0x04u) = (1u << 1) | (1u << 4); /* Schmitt + 4mA drive */
 
     /* -----------------------------------------------------------------------
      * 4. Disable UART before configuring baud rate (PL011 requirement).
