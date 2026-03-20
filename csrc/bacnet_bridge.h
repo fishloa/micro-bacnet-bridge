@@ -384,6 +384,22 @@ uint32_t mstp_port_timer_ms(void);
 void mstp_send_whois(uint8_t src_mac);
 
 /**
+ * @brief Send a Poll For Master frame to a specific MAC address.
+ */
+void mstp_poll_for_master(uint8_t dest_mac, uint8_t src_mac);
+
+/**
+ * @brief Send a Token frame to a specific MAC address.
+ */
+void mstp_send_token(uint8_t dest_mac, uint8_t src_mac);
+
+/**
+ * @brief Wait for a complete MS/TP frame with timeout.
+ * @return true if a frame was received, false on timeout.
+ */
+bool mstp_receive_frame_wait(uint32_t timeout_us, uint8_t *out_type, uint8_t *out_src);
+
+/**
  * @brief Non-blocking MS/TP frame receive state machine.
  *
  * Drains the UART1 RX FIFO, advancing the receive state machine one byte

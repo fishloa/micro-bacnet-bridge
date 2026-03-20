@@ -589,6 +589,46 @@ void mstp_send_whois(uint8_t src_mac)
 }
 
 /* --------------------------------------------------------------------------
+ * mstp_poll_for_master — send Poll For Master to a specific MAC
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Send a Poll For Master frame to a specific MAC address.
+ *
+ * Frame type 0x01 = Poll For Master (no data).
+ * The addressed slave should respond with Reply To Poll For Master (0x02).
+ *
+ * @param dest_mac  Destination MAC address to poll.
+ * @param src_mac   Source MAC (this master station).
+ */
+__attribute__((section(".time_critical")))
+void mstp_poll_for_master(uint8_t dest_mac, uint8_t src_mac)
+{
+    mstp_send_frame(0x01, dest_mac, src_mac, (void *)0, 0);
+    g_mstp_status.frames_tx++;
+}
+
+/* --------------------------------------------------------------------------
+ * mstp_send_token — pass the token to a specific MAC
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Send a Token frame to a specific MAC address.
+ *
+ * Frame type 0x00 = Token (no data).
+ * Grants the addressed station permission to transmit.
+ *
+ * @param dest_mac  Destination MAC to receive the token.
+ * @param src_mac   Source MAC (this master station).
+ */
+__attribute__((section(".time_critical")))
+void mstp_send_token(uint8_t dest_mac, uint8_t src_mac)
+{
+    mstp_send_frame(0x00, dest_mac, src_mac, (void *)0, 0);
+    g_mstp_status.frames_tx++;
+}
+
+/* --------------------------------------------------------------------------
  * mstp_receive_check — non-blocking MS/TP frame receive state machine
  * -------------------------------------------------------------------------- */
 
@@ -602,6 +642,8 @@ void mstp_send_whois(uint8_t src_mac)
 #define RX_DATA_CRC2    6
 
 static uint8_t rx_state = RX_IDLE;
+static uint8_t rx_last_frame_type = 0;
+static uint8_t rx_last_src_mac = 0;
 static uint8_t rx_header[5];
 static uint8_t rx_header_idx;
 
@@ -665,6 +707,8 @@ void mstp_receive_check(void)
                 /* No data — frame complete (Token, Poll For Master, etc.) */
                 g_mstp_status.frames_rx++;
                 g_mstp_status.bus_active = 1;
+                rx_last_frame_type = rx_header[0];
+                rx_last_src_mac    = rx_header[2];
                 rx_state = RX_IDLE;
             } else if (rx_data_len > BACNET_PDU_MAX_DATA) {
                 /* Too large for our PDU — skip */
@@ -711,6 +755,10 @@ void mstp_receive_check(void)
             uint8_t frame_type = rx_header[0];
             uint8_t src_mac    = rx_header[2];
 
+            /* Save for mstp_receive_frame_wait() */
+            rx_last_frame_type = frame_type;
+            rx_last_src_mac    = src_mac;
+
             /* Forward ALL BACnet data frames to Core 0 (bridge is transparent).
              * Frame type 0x05 = BACnet Data Not Expecting Reply.
              * Frame type 0x06 = BACnet Data Expecting Reply.
@@ -741,4 +789,26 @@ void mstp_receive_check(void)
             break;
         }
     }
+}
+
+/* --------------------------------------------------------------------------
+ * mstp_receive_frame_wait — blocking receive with timeout
+ * -------------------------------------------------------------------------- */
+
+__attribute__((section(".time_critical")))
+bool mstp_receive_frame_wait(uint32_t timeout_us, uint8_t *out_type, uint8_t *out_src)
+{
+    uint32_t start = mstp_port_timer_us();
+    uint32_t prev_rx = g_mstp_status.frames_rx;
+
+    while ((mstp_port_timer_us() - start) < timeout_us) {
+        core1_check_flash_pause();
+        mstp_receive_check();
+        if (g_mstp_status.frames_rx != prev_rx) {
+            if (out_type) *out_type = rx_last_frame_type;
+            if (out_src) *out_src = rx_last_src_mac;
+            return true;
+        }
+    }
+    return false;
 }

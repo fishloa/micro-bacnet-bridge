@@ -129,6 +129,15 @@ static bacnet_pdu_t outbound_pdu;
 /** Who-Is broadcast interval in microseconds (10 seconds). */
 #define WHOIS_INTERVAL_US   10000000u
 
+/** Poll For Master interval — scan one MAC every 200ms. */
+#define POLL_INTERVAL_US    200000u
+
+/** Timeout waiting for Reply To Poll For Master (100ms per BACnet standard). */
+#define POLL_REPLY_TIMEOUT_US  100000u
+
+/** Maximum MAC address to poll (per BACnet, master MACs are 0–127). */
+#define MAX_POLL_MAC        127u
+
 /* --------------------------------------------------------------------------
  * mstp_poll — MS/TP state machine invocation
  * -------------------------------------------------------------------------- */
@@ -332,6 +341,9 @@ void core1_entry(void)
     uint8_t auto_detect_mode = (g_mstp_config.baud_rate == 0u);
     /* Timestamp of last valid MS/TP frame — for re-scan trigger. */
     uint32_t last_frame_us = mstp_port_timer_us();
+    /* Poll For Master state — scans one MAC per cycle. */
+    uint8_t poll_next_mac = 0;
+    uint32_t last_poll_us = mstp_port_timer_us();
     /* Timestamp of last Who-Is broadcast. */
     uint32_t last_whois_us = mstp_port_timer_us();
 
@@ -341,10 +353,11 @@ void core1_entry(void)
         /* Increment the watchdog heartbeat counter (C2). */
         core1_heartbeat++;
 
-        /* In auto-detect mode, re-scan if bus has been silent for 10 seconds. */
+        /* In auto-detect mode, re-scan if bus has been silent for 60 seconds.
+         * Longer interval gives Poll For Master time to discover slaves. */
         if (auto_detect_mode && !g_mstp_status.bus_active) {
             uint32_t elapsed = mstp_port_timer_us() - last_frame_us;
-            if (elapsed > 10000000u) { /* 10 seconds */
+            if (elapsed > 60000000u) { /* 60 seconds */
                 g_mstp_status.detecting = 1;
                 uint32_t new_baud = mstp_port_auto_detect_baud();
                 g_mstp_status.detecting = 0;
@@ -368,6 +381,43 @@ void core1_entry(void)
             if ((now_us - last_whois_us) >= WHOIS_INTERVAL_US) {
                 mstp_send_whois(g_mstp_config.mac_address);
                 last_whois_us = now_us;
+            }
+        }
+
+        /* Poll For Master — cycle through MAC addresses to discover slaves.
+         * MS/TP slaves can only transmit after receiving the token from a master.
+         * We poll one MAC every POLL_INTERVAL_US, send Poll For Master,
+         * wait for Reply, and if we get one, send the Token so the slave
+         * can transmit any pending data (e.g. I-Am response). */
+        {
+            uint32_t now_us = mstp_port_timer_us();
+            if ((now_us - last_poll_us) >= POLL_INTERVAL_US) {
+                last_poll_us = now_us;
+
+                /* Skip our own MAC */
+                if (poll_next_mac == g_mstp_config.mac_address) {
+                    poll_next_mac++;
+                    if (poll_next_mac > MAX_POLL_MAC) poll_next_mac = 0;
+                }
+
+                /* Send Poll For Master */
+                mstp_poll_for_master(poll_next_mac, g_mstp_config.mac_address);
+
+                /* Wait for Reply To Poll For Master (frame type 0x02) */
+                uint8_t reply_type = 0;
+                uint8_t reply_src = 0;
+                if (mstp_receive_frame_wait(POLL_REPLY_TIMEOUT_US, &reply_type, &reply_src)) {
+                    if (reply_type == 0x02) {
+                        /* Slave responded — send Token so it can transmit */
+                        mstp_send_token(reply_src, g_mstp_config.mac_address);
+                        /* Wait for the slave to send its data */
+                        mstp_receive_frame_wait(POLL_REPLY_TIMEOUT_US, (void *)0, (void *)0);
+                    }
+                }
+
+                /* Advance to next MAC */
+                poll_next_mac++;
+                if (poll_next_mac > MAX_POLL_MAC) poll_next_mac = 0;
             }
         }
 
