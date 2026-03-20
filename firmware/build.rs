@@ -51,6 +51,29 @@ fn main() {
     }
     println!("cargo:rerun-if-changed=../csrc/bacnet_bridge.h");
 
+    // Common C compiler flags for ARM Cortex-M33
+    let arm_flags: &[&str] = &["-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-sp-d16", "-Os"];
+
+    // Build bacnet-stack library files (need standard library headers)
+    let mut bacnet_build = cc::Build::new();
+    bacnet_build
+        .compiler("arm-none-eabi-gcc")
+        .target("thumbv8m.main-none-eabihf")
+        .include("../lib/bacnet-stack/src")
+        .file("../lib/bacnet-stack/src/bacnet/datalink/crc.c")
+        // Provide minimal C stdlib header stubs (string.h, math.h) since the
+        // Homebrew arm-none-eabi-gcc lacks newlib. These are declaration-only —
+        // no implementations are linked (bacnet-stack CRC doesn't call them).
+        .include("../csrc/newlib-stubs")
+        .flag("-ffreestanding")
+        .flag("-std=c99")
+        .warnings(false); // bacnet-stack has its own warning policy
+    for f in arm_flags {
+        bacnet_build.flag(f);
+    }
+    bacnet_build.compile("bacnet_crc");
+
+    // Build our own C sources (freestanding, no standard library)
     let mut build = cc::Build::new();
     build
         .compiler("arm-none-eabi-gcc")
@@ -61,10 +84,6 @@ fn main() {
         .file("../csrc/mstp_port.c")
         .file("../csrc/bacnet_port.c")
         .file("../csrc/core1_entry.c")
-        .flag("-mthumb")
-        .flag("-mfloat-abi=hard")
-        .flag("-mfpu=fpv5-sp-d16")
-        .flag("-Os")
         .flag("-ffreestanding")
         .flag("-nostdlib")
         .flag("-std=c99")

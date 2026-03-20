@@ -467,28 +467,10 @@ uint32_t mstp_port_timer_ms(void)
  * MS/TP CRC functions (BACnet Annex G)
  * -------------------------------------------------------------------------- */
 
-/** CRC-8 accumulate — used for the MS/TP header CRC. */
-__attribute__((section(".time_critical")))
-static uint8_t mstp_crc8(uint8_t crc, uint8_t byte)
-{
-    uint8_t data = crc ^ byte;
-    for (int i = 0; i < 8; i++) {
-        if (data & 1)
-            data = (data >> 1) ^ 0x8Cu;
-        else
-            data >>= 1;
-    }
-    return data;
-}
-
-/** CRC-16 accumulate — used for the MS/TP data CRC. */
-__attribute__((section(".time_critical")))
-static uint16_t mstp_crc16(uint16_t crc, uint8_t byte)
-{
-    uint8_t low = (uint8_t)(crc & 0xFF) ^ byte;
-    low = low ^ (low << 4);
-    return (crc >> 8) ^ ((uint16_t)low << 8) ^ ((uint16_t)low << 3) ^ ((uint16_t)low >> 4);
-}
+/* BACnet CRC functions from lib/bacnet-stack/src/bacnet/datalink/crc.c.
+ * Linked via build.rs; prototypes declared here. */
+extern uint8_t CRC_Calc_Header(uint8_t dataValue, uint8_t crcValue);
+extern uint16_t CRC_Calc_Data(uint8_t dataValue, uint16_t crcValue);
 
 /* --------------------------------------------------------------------------
  * mstp_send_frame — transmit a complete MS/TP frame (internal)
@@ -529,7 +511,7 @@ static void mstp_send_frame(uint8_t frame_type, uint8_t dest, uint8_t src,
     uint8_t hcrc = 0xFFu;
     for (int i = 0; i < 5; i++) {
         mstp_port_put_byte(header[i]);
-        hcrc = mstp_crc8(hcrc, header[i]);
+        hcrc = CRC_Calc_Header(header[i], hcrc);
     }
     mstp_port_put_byte(~hcrc); /* complement */
 
@@ -538,7 +520,7 @@ static void mstp_send_frame(uint8_t frame_type, uint8_t dest, uint8_t src,
         uint16_t dcrc = 0xFFFFu;
         for (uint16_t i = 0; i < data_len; i++) {
             mstp_port_put_byte(data[i]);
-            dcrc = mstp_crc16(dcrc, data[i]);
+            dcrc = CRC_Calc_Data(data[i], dcrc);
         }
         dcrc = ~dcrc; /* complement */
         mstp_port_put_byte((uint8_t)(dcrc & 0xFF));
@@ -694,8 +676,8 @@ void mstp_receive_check(void)
         case RX_HEADER_CRC: {
             /* Verify header CRC */
             uint8_t crc = 0xFFu;
-            for (int i = 0; i < 5; i++) crc = mstp_crc8(crc, rx_header[i]);
-            crc = mstp_crc8(crc, byte);
+            for (int i = 0; i < 5; i++) crc = CRC_Calc_Header(rx_header[i], crc);
+            crc = CRC_Calc_Header(byte, crc);
             if (crc != 0x55u) { /* valid CRC-8 remainder */
                 /* Bad header CRC */
                 g_mstp_status.errors_rx++;
@@ -707,6 +689,14 @@ void mstp_receive_check(void)
                 /* No data — frame complete (Token, Poll For Master, etc.) */
                 g_mstp_status.frames_rx++;
                 g_mstp_status.bus_active = 1;
+                /* Flash LED twice on RX */
+                REG(SIO_BASE, 0x014u) = (1u << 25);
+                for (volatile int d = 0; d < 50000; d++) {}
+                REG(SIO_BASE, 0x018u) = (1u << 25);
+                for (volatile int d = 0; d < 30000; d++) {}
+                REG(SIO_BASE, 0x014u) = (1u << 25);
+                for (volatile int d = 0; d < 50000; d++) {}
+                REG(SIO_BASE, 0x018u) = (1u << 25);
                 rx_last_frame_type = rx_header[0];
                 rx_last_src_mac    = rx_header[2];
                 rx_state = RX_IDLE;
@@ -737,10 +727,10 @@ void mstp_receive_check(void)
             /* Verify data CRC */
             uint16_t crc = 0xFFFFu;
             for (uint16_t i = 0; i < rx_data_len; i++) {
-                crc = mstp_crc16(crc, rx_data[i]);
+                crc = CRC_Calc_Data(rx_data[i], crc);
             }
-            crc = mstp_crc16(crc, rx_data[rx_data_idx]); /* CRC low byte */
-            crc = mstp_crc16(crc, byte);                  /* CRC high byte */
+            crc = CRC_Calc_Data(rx_data[rx_data_idx], crc); /* CRC low byte */
+            crc = CRC_Calc_Data(byte, crc);                  /* CRC high byte */
 
             if (crc != 0xF0B8u) { /* valid CRC-16 remainder */
                 g_mstp_status.errors_rx++;
@@ -748,9 +738,16 @@ void mstp_receive_check(void)
                 break;
             }
 
-            /* Valid frame received */
+            /* Valid frame received — flash LED twice quickly */
             g_mstp_status.frames_rx++;
             g_mstp_status.bus_active = 1;
+            REG(SIO_BASE, 0x014u) = (1u << 25); /* LED on */
+            for (volatile int d = 0; d < 50000; d++) {}
+            REG(SIO_BASE, 0x018u) = (1u << 25); /* LED off */
+            for (volatile int d = 0; d < 30000; d++) {}
+            REG(SIO_BASE, 0x014u) = (1u << 25); /* LED on */
+            for (volatile int d = 0; d < 50000; d++) {}
+            REG(SIO_BASE, 0x018u) = (1u << 25); /* LED off */
 
             uint8_t frame_type = rx_header[0];
             uint8_t src_mac    = rx_header[2];
