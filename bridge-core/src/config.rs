@@ -110,7 +110,7 @@ fn default_mstp_mac() -> u8 {
     1
 }
 fn default_mstp_baud() -> u32 {
-    0 // 0 = auto-detect
+    19_200
 }
 fn default_max_master() -> u8 {
     127
@@ -122,7 +122,7 @@ impl Default for BacnetDeviceConfig {
             device_id: 389_999,
             device_name: default_device_name(),
             mstp_mac: 1,
-            mstp_baud: 0, // 0 = auto-detect
+            mstp_baud: 19_200,
             max_master: 127,
         }
     }
@@ -733,7 +733,7 @@ mod tests {
     fn default_bacnet_device_id() {
         let cfg = BridgeConfig::default();
         assert_eq!(cfg.bacnet.device_id, 389_999);
-        assert_eq!(cfg.bacnet.mstp_baud, 0); // auto-detect
+        assert_eq!(cfg.bacnet.mstp_baud, 19_200);
         assert_eq!(cfg.bacnet.mstp_mac, 1);
         assert_eq!(cfg.bacnet.max_master, 127);
     }

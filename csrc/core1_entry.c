@@ -384,11 +384,15 @@ void core1_entry(void)
             }
         }
 
-        /* Poll For Master — cycle through MAC addresses to discover slaves.
-         * MS/TP slaves can only transmit after receiving the token from a master.
-         * We poll one MAC every POLL_INTERVAL_US, send Poll For Master,
-         * wait for Reply, and if we get one, send the Token so the slave
-         * can transmit any pending data (e.g. I-Am response). */
+        /* Token grant — cycle through MAC addresses to let slaves transmit.
+         *
+         * MS/TP slaves do NOT respond to Poll For Master (that's master-only).
+         * Slaves can only transmit after receiving a Token (frame type 0x00).
+         * After we broadcast Who-Is, slaves queue an I-Am response but can't
+         * send it until granted the Token.
+         *
+         * We send Token to one MAC every POLL_INTERVAL_US, then listen for
+         * a response. If the slave has queued data, it transmits immediately. */
         {
             uint32_t now_us = mstp_port_timer_us();
             if ((now_us - last_poll_us) >= POLL_INTERVAL_US) {
@@ -400,20 +404,11 @@ void core1_entry(void)
                     if (poll_next_mac > MAX_POLL_MAC) poll_next_mac = 0;
                 }
 
-                /* Send Poll For Master */
-                mstp_poll_for_master(poll_next_mac, g_mstp_config.mac_address);
+                /* Send Token directly to this MAC — slave can transmit if it has data */
+                mstp_send_token(poll_next_mac, g_mstp_config.mac_address);
 
-                /* Wait for Reply To Poll For Master (frame type 0x02) */
-                uint8_t reply_type = 0;
-                uint8_t reply_src = 0;
-                if (mstp_receive_frame_wait(POLL_REPLY_TIMEOUT_US, &reply_type, &reply_src)) {
-                    if (reply_type == 0x02) {
-                        /* Slave responded — send Token so it can transmit */
-                        mstp_send_token(reply_src, g_mstp_config.mac_address);
-                        /* Wait for the slave to send its data */
-                        mstp_receive_frame_wait(POLL_REPLY_TIMEOUT_US, (void *)0, (void *)0);
-                    }
-                }
+                /* Wait for the slave to respond with data */
+                mstp_receive_frame_wait(POLL_REPLY_TIMEOUT_US, (void *)0, (void *)0);
 
                 /* Advance to next MAC */
                 poll_next_mac++;
