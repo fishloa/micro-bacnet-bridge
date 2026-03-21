@@ -39,11 +39,11 @@
 		}
 	}
 
-	async function deleteUser(id: number) {
+	async function deleteUser(username: string) {
 		errorMsg = '';
 		try {
-			await api.deleteUser(id);
-			users = users.filter(u => u.id !== id);
+			await api.deleteUser(username);
+			users = users.filter(u => u.username !== username);
 		} catch (e) {
 			errorMsg = `Failed to delete user: ${e instanceof Error ? e.message : String(e)}`;
 		}
@@ -102,7 +102,7 @@
 				</tr>
 			</thead>
 			<tbody>
-				{#each users as user (user.id)}
+				{#each users as user (user.username)}
 					<tr>
 						<td>{user.username}</td>
 						<td>
@@ -113,7 +113,7 @@
 						<td>
 							<button
 								class="vui-btn vui-btn-sm vui-btn-danger"
-								onclick={() => deleteUser(user.id)}
+								onclick={() => deleteUser(user.username)}
 								disabled={user.username === 'admin'}
 							>Delete</button>
 						</td>

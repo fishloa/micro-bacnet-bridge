@@ -15,6 +15,18 @@
 	let net: NetworkConfig = $state({
 		dhcp: true, ip: '', subnet: '', gateway: '', dns: '', hostname: ''
 	});
+	let currentDhcpIp = $state('');
+
+	function isDhcpFieldEmpty(field: string): boolean {
+		return field === '' || field === '0.0.0.0';
+	}
+
+	function handleDhcpToggle() {
+		// When user disables DHCP and fields are empty, pre-populate with current DHCP values
+		if (!net.dhcp && isDhcpFieldEmpty(net.ip) && currentDhcpIp) {
+			net.ip = currentDhcpIp;
+		}
+	}
 	let bacnet: BacnetConfig = $state({
 		deviceId: 0, deviceName: '', vendor: '', mstpMac: 0, mstpBaud: 0, maxMaster: 127, bacnetIpEnabled: true
 	});
@@ -84,6 +96,8 @@
 	onMount(async () => {
 		// Sequential fetches to avoid opening more TCP connections than the
 		// W5500 has sockets (4). Each await completes before the next begins.
+		const status = await api.getStatus();
+		currentDhcpIp = status.ip;
 		net = await api.getNetworkConfig();
 		bacnet = await api.getBacnetConfig();
 		ntp = await api.getNtpConfig();
@@ -129,7 +143,7 @@
 				<tbody>
 					<tr>
 						<td class="field-label">DHCP</td>
-						<td><input type="checkbox" class="vui-checkbox" bind:checked={net.dhcp} /></td>
+						<td><input type="checkbox" class="vui-checkbox" bind:checked={net.dhcp} onchange={handleDhcpToggle} /></td>
 					</tr>
 					<tr>
 						<td class="field-label">Hostname</td>

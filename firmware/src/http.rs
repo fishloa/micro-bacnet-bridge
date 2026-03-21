@@ -1339,10 +1339,44 @@ impl RequestHandlerService<()> for PutBulkConfigHandler {
         &self,
         _state: &(),
         _path_params: (),
-        request: Request<'_, R>,
+        mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        // TODO: deserialise body into BridgeConfig, validate, save, reboot.
+        if !bearer_token_ok(request.parts.headers()).await {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized\r\n")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+        }
+        // Deserialise under the CONFIG lock to avoid putting BridgeConfig on stack.
+        let body_bytes = match request.body_connection.body().read_all().await {
+            Ok(b) => b,
+            Err(_) => {
+                return (StatusCode::BAD_REQUEST, "bad request\r\n")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await;
+            }
+        };
+        let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
+        let ok = {
+            let mut guard = CONFIG.lock().await;
+            if let Some(cfg) = guard.as_mut() {
+                match serde_json_core::from_str::<BridgeConfig>(body_str) {
+                    Ok((new_cfg, _)) if new_cfg.validate() => {
+                        *cfg = new_cfg;
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        };
+        if !ok {
+            return (StatusCode::BAD_REQUEST, "invalid config\r\n")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+        }
+        crate::config::request_save();
         send_json(
             request.body_connection.finalize().await?,
             response_writer,

@@ -494,8 +494,8 @@ export const api = {
 	getUsers: () => get('/users', MOCK_USERS),
 	createUser: (username: string, password: string, role: string) =>
 		post('/users', { username, password, role }, { ok: true, id: 1 }),
-	deleteUser: (id: number) =>
-		del(`/users/${id}`, { ok: true }),
+	deleteUser: (username: string) =>
+		del(`/users/${encodeURIComponent(username)}`, { ok: true }),
 	writePoint: (deviceId: number, objectType: string, objectInstance: number, value: string | number | boolean) =>
 		put(`/devices/${deviceId}/points/${objectType}:${objectInstance}`, { value }, { ok: true }),
 	getNtpConfig: () => get('/config/ntp', MOCK_NTP_CONFIG),
@@ -522,8 +522,8 @@ export const api = {
 	getTokens: () => get('/tokens', MOCK_TOKENS),
 	createToken: (name: string, role: string): Promise<CreateTokenResult> =>
 		post('/tokens', { name, role }, { ok: true, id: 'new-id', token: 'new-plaintext-token' } as CreateTokenResult),
-	revokeToken: (id: string) =>
-		del(`/tokens/${id}`, { ok: true }),
+	revokeToken: (name: string) =>
+		del(`/tokens/${encodeURIComponent(name)}`, { ok: true }),
 
 	// TLS server removed — admin UI is plain HTTP on trusted LAN.
 	// TLS client for MQTT is configured via the MQTT config page.
