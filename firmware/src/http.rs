@@ -21,6 +21,9 @@
 //! | GET | `/api/v1/config/mqtt` | MQTT stub |
 //! | GET | `/api/v1/config/snmp` | SNMP stub |
 //! | GET | `/api/v1/config/points` | point mappings stub |
+//! | GET | `/api/v1/config/ota` | OTA config stub |
+//! | GET | `/api/v1/config/convertors` | convertors stub |
+//! | POST | `/api/v1/system/ota/check` | OTA update check stub |
 //! | GET | `/api/v1/system/status` | uptime, device count, firmware |
 //! | PUT | `/api/v1/config/network` | update network config |
 //! | PUT | `/api/v1/config/bacnet` | update BACnet config |
@@ -175,6 +178,20 @@ impl AppWithStateBuilder for HttpApp {
             .route(
                 "/api/v1/config/points",
                 get_service(StaticJsonHandler(b"[]")),
+            )
+            .route(
+                "/api/v1/config/ota",
+                get_service(StaticJsonHandler(
+                    b"{\"auto_update\":false,\"manifest_url\":\"\",\"channel\":\"release\",\"check_interval_secs\":3600}",
+                )),
+            )
+            .route(
+                "/api/v1/config/convertors",
+                get_service(StaticJsonHandler(b"[]")),
+            )
+            .route(
+                "/api/v1/system/ota/check",
+                post_service(StaticJsonHandler(b"{\"available\":false}")),
             )
             // ---- Auth ----
             .route("/api/v1/auth/login", post_service(AuthLoginHandler))
