@@ -611,6 +611,11 @@ impl RequestHandlerService<()> for PutNetworkConfigHandler {
         mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
+        if !bearer_token_ok(request.parts.headers()).await {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized\r\n")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+        }
         match request.body_connection.body().read_all().await {
             Ok(body_bytes) => {
                 let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
@@ -699,6 +704,11 @@ impl RequestHandlerService<()> for PutBacnetConfigHandler {
         mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
+        if !bearer_token_ok(request.parts.headers()).await {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized\r\n")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+        }
         match request.body_connection.body().read_all().await {
             Ok(body_bytes) => {
                 let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
@@ -1029,6 +1039,11 @@ impl RequestHandlerService<()> for PostUsersHandler {
         mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
+        if !bearer_token_ok(request.parts.headers()).await {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized\r\n")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+        }
         match request.body_connection.body().read_all().await {
             Ok(body_bytes) => {
                 let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
@@ -1175,6 +1190,11 @@ impl RequestHandlerService<()> for PostTokensHandler {
         mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
+        if !bearer_token_ok(request.parts.headers()).await {
+            return (StatusCode::UNAUTHORIZED, "Unauthorized\r\n")
+                .write_to(request.body_connection.finalize().await?, response_writer)
+                .await;
+        }
         match request.body_connection.body().read_all().await {
             Ok(body_bytes) => {
                 let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
@@ -1437,7 +1457,7 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
         _state: &(),
         _path_params: (),
         path: picoserve::request::Path<'_>,
-        request: Request<'_, R>,
+        mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         let path_str = path.encoded();
@@ -1453,14 +1473,61 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
             }
         }
 
-        // PUT /api/v1/config/* — accept any config PUT as a no-op stub.
-        // Still signal a save so callers get consistent persistence behaviour
-        // even for endpoints that don't yet parse their body.
+        // PUT /api/v1/config/{section} — parse body and update the matching config field.
         if method == "PUT" && path_str.starts_with("/api/v1/config/") {
-            crate::config::request_save();
-            return (StatusCode::NO_CONTENT, NoContent)
-                .write_to(request.body_connection.finalize().await?, response_writer)
-                .await;
+            let section = &path_str["/api/v1/config/".len()..];
+            let body_bytes = match request.body_connection.body().read_all().await {
+                Ok(b) => b,
+                Err(_) => {
+                    return (StatusCode::BAD_REQUEST, "bad request\r\n")
+                        .write_to(request.body_connection.finalize().await?, response_writer)
+                        .await;
+                }
+            };
+            let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
+
+            let ok = {
+                let mut guard = CONFIG.lock().await;
+                if let Some(cfg) = guard.as_mut() {
+                    match section {
+                        "ntp" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.ntp = v)
+                            .is_ok(),
+                        "syslog" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.syslog = v)
+                            .is_ok(),
+                        "mqtt" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.mqtt = v)
+                            .is_ok(),
+                        "snmp" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.snmp = v)
+                            .is_ok(),
+                        "ota" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.ota = v)
+                            .is_ok(),
+                        "convertors" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.convertors = v)
+                            .is_ok(),
+                        "points" => serde_json_core::from_str(body_str)
+                            .map(|(v, _)| cfg.points = v)
+                            .is_ok(),
+                        _ => true, // unknown section — accept silently
+                    }
+                } else {
+                    false
+                }
+            };
+
+            if ok {
+                crate::config::request_save();
+                return (StatusCode::NO_CONTENT, NoContent)
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await;
+            } else {
+                return (StatusCode::BAD_REQUEST, "invalid config JSON\r\n")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await;
+            }
         }
 
         // GET /api/v1/devices/{id}/points* — stub: return empty array
