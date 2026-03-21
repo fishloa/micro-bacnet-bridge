@@ -274,6 +274,62 @@ void mstp_port_init(uint32_t baud_rate)
 }
 
 /* --------------------------------------------------------------------------
+ * mstp_port_loopback_test — PL011 internal loopback self-test
+ * -------------------------------------------------------------------------- */
+
+/**
+ * @brief Test UART RX by enabling PL011 internal loopback mode.
+ *
+ * Sends a known byte pattern on TX which is internally routed to RX.
+ * No external wiring needed. Returns the number of bytes successfully
+ * received (should equal bytes sent if RX works).
+ *
+ * @param results  If non-NULL, receives up to 8 bytes that were read back.
+ * @return Number of bytes successfully looped back (0 = RX broken).
+ */
+__attribute__((section(".time_critical")))
+uint32_t mstp_port_loopback_test(uint8_t *results)
+{
+    /* Enable loopback: set LBE (bit 7) in CR register */
+    uint32_t cr = REG(UART1_BASE, UART_CR_OFFSET);
+    REG(UART1_BASE, UART_CR_OFFSET) = cr | (1u << 7);
+
+    /* Drain any stale RX data */
+    while (mstp_port_byte_available()) {
+        (void)mstp_port_get_byte();
+    }
+
+    /* Send and receive 8 test bytes one at a time */
+    static const uint8_t pattern[] = { 0x55, 0xFF, 0xAA, 0x01, 0x02, 0x03, 0xDE, 0xAD };
+    uint32_t count = 0;
+
+    for (int i = 0; i < 8; i++) {
+        /* Send one byte */
+        mstp_port_put_byte(pattern[i]);
+
+        /* Wait for TX to complete */
+        while (REG(UART1_BASE, UART_FR_OFFSET) & UART_FR_BUSY) {}
+
+        /* Wait for byte to appear in RX FIFO */
+        uint32_t timeout = 100000u;
+        while (!mstp_port_byte_available() && timeout > 0) { timeout--; }
+
+        if (mstp_port_byte_available()) {
+            uint8_t b = mstp_port_get_byte();
+            if (results) results[i] = b;
+            if (b == pattern[i]) count++;
+        } else {
+            if (results) results[i] = 0xEE; /* timeout marker */
+        }
+    }
+
+    /* Disable loopback */
+    REG(UART1_BASE, UART_CR_OFFSET) = cr;
+
+    return count;
+}
+
+/* --------------------------------------------------------------------------
  * mstp_port_auto_detect_baud — scan for valid MS/TP frames
  * -------------------------------------------------------------------------- */
 

@@ -59,7 +59,7 @@ pub struct MstpStatus {
     pub bus_active: u8,
     pub detecting: u8,
     pub parity: u8,
-    _pad: u8,
+    pub loopback_ok: u8,
 }
 
 extern "C" {
@@ -118,7 +118,7 @@ impl Drop for FlashPauseGuard {
 }
 
 /// Read the current MS/TP serial port status from Core 1.
-pub fn mstp_status() -> (u32, u32, u32, u32, bool, bool) {
+pub fn mstp_status() -> (u32, u32, u32, u32, bool, bool, u8) {
     // SAFETY: g_mstp_status is written only by Core 1, read-only from Core 0.
     // Individual u32 reads are atomic on Cortex-M33.
     unsafe {
@@ -130,6 +130,7 @@ pub fn mstp_status() -> (u32, u32, u32, u32, bool, bool) {
             s.errors_rx,
             s.bus_active != 0,
             s.detecting != 0,
+            s.loopback_ok,
         )
     }
 }

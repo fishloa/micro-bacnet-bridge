@@ -164,13 +164,13 @@ pub async fn handle_sse(socket: &mut TcpSocket<'_>) {
 
         // Send serial status every cycle
         {
-            let (baud, frx, ftx, erx, active, detecting) = crate::core1::mstp_status();
-            let mut sbuf: heapless::String<192> = heapless::String::new();
+            let (baud, frx, ftx, erx, active, detecting, loopback) = crate::core1::mstp_status();
+            let mut sbuf: heapless::String<256> = heapless::String::new();
             let _ = core::fmt::write(
                 &mut sbuf,
                 format_args!(
-                    "event: serial\ndata: {{\"baud\":{},\"parity\":\"8N1\",\"framesRx\":{},\"framesTx\":{},\"errorsRx\":{},\"busActive\":{},\"detecting\":{}}}\n\n",
-                    baud, frx, ftx, erx, active, detecting,
+                    "event: serial\ndata: {{\"baud\":{},\"parity\":\"8N1\",\"framesRx\":{},\"framesTx\":{},\"errorsRx\":{},\"busActive\":{},\"detecting\":{},\"loopback\":{}}}\n\n",
+                    baud, frx, ftx, erx, active, detecting, loopback,
                 ),
             );
             if socket.write_all(sbuf.as_bytes()).await.is_err() {

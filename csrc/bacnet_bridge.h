@@ -87,6 +87,8 @@ typedef struct {
     uint8_t detecting;
     /** Parity setting: 0=none, 1=even, 2=odd. Always 0 (8N1) for MS/TP. */
     uint8_t parity;
+    /** Loopback test result: 8 = all bytes matched (RX OK), 0 = RX broken. */
+    uint8_t loopback_ok;
     uint8_t _pad;
 } mstp_status_t;
 
@@ -382,6 +384,11 @@ uint32_t mstp_port_timer_ms(void);
  * @param src_mac  Source MS/TP MAC address for this node.
  */
 void mstp_send_whois(uint8_t src_mac);
+
+/**
+ * @brief PL011 internal loopback self-test. Returns count of matched bytes (0-8).
+ */
+uint32_t mstp_port_loopback_test(uint8_t *results);
 
 /**
  * @brief Send a Poll For Master frame to a specific MAC address.

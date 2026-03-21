@@ -736,7 +736,7 @@ impl RequestHandlerService<()> for GetStatusHandler {
     ) -> Result<ResponseSent, W::Error> {
         let uptime_s = embassy_time::Instant::now().as_millis() / 1000;
         let device_count = BRIDGE_STATE.lock().await.device_count;
-        let (baud, frames_rx, frames_tx, errors_rx, bus_active, detecting) =
+        let (baud, frames_rx, frames_tx, errors_rx, bus_active, detecting, loopback) =
             crate::core1::mstp_status();
 
         let mut body: heapless::String<512> = heapless::String::new();
@@ -746,7 +746,7 @@ impl RequestHandlerService<()> for GetStatusHandler {
                 concat!(
                     "{{\"uptime\":{},\"deviceCount\":{},\"vendor\":\"Icomb Place\",\"firmware\":\"{}\",",
                     "\"serial\":{{\"baud\":{},\"parity\":\"8N1\",\"framesRx\":{},\"framesTx\":{},",
-                    "\"errorsRx\":{},\"busActive\":{},\"detecting\":{}}}}}"
+                    "\"errorsRx\":{},\"busActive\":{},\"detecting\":{},\"loopback\":{}}}}}"
                 ),
                 uptime_s,
                 device_count,
@@ -757,6 +757,7 @@ impl RequestHandlerService<()> for GetStatusHandler {
                 errors_rx,
                 bus_active,
                 detecting,
+                loopback,
             ),
         );
 

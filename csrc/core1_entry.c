@@ -301,6 +301,9 @@ void core1_entry(void)
         mstp_port_init(baud);
         g_mstp_status.active_baud = baud;
         g_mstp_status.parity = 0; /* 8N1 always */
+
+        /* Run PL011 internal loopback self-test to verify RX works. */
+        g_mstp_status.loopback_ok = (uint8_t)mstp_port_loopback_test((void *)0);
     }
 
     /* -----------------------------------------------------------------------

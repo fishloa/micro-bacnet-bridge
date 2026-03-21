@@ -87,7 +87,12 @@ async fn main(spawner: Spawner) {
         env!("FIRMWARE_VERSION")
     );
 
-    let p = embassy_rp::init(Default::default());
+    // Use crystal oscillator (12MHz XOSC → PLL → 150MHz system clock).
+    // Default::default() uses ROSC (~6MHz, unpredictable) which breaks
+    // UART baud rate calculation (C code assumes SYS_CLK_HZ = 150MHz).
+    let mut config = embassy_rp::config::Config::default();
+    config.clocks = embassy_rp::clocks::ClockConfig::crystal(12_000_000);
+    let p = embassy_rp::init(config);
 
     // ---- GPIO: LED heartbeat ----
     let mut led = Output::new(p.PIN_25, Level::Low);
