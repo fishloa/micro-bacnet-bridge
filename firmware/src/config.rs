@@ -237,8 +237,16 @@ pub fn request_save() {
     SAVE_SIGNAL.signal(());
 }
 
+/// Scratch buffer for the config save task, held in a static to avoid putting
+/// 4 KiB on the async task's Future stack (which would bloat every suspend point).
+///
+/// Safe: `config_save_task` runs as a single embassy task; no other code touches
+/// this buffer.  Embassy tasks are `Send` + cooperative, so there is no
+/// concurrent access.
+static mut CONFIG_SAVE_BUF: [u8; JSON_BUF_SIZE] = [0u8; JSON_BUF_SIZE];
+
 /// Dedicated task that waits for save requests and writes config to flash.
-/// This keeps the 2 KB JSON buffer off the web task stacks.
+/// This keeps the JSON buffer off the web task stacks.
 #[embassy_executor::task]
 pub async fn config_save_task() {
     loop {
@@ -248,13 +256,16 @@ pub async fn config_save_task() {
         // Brief delay to coalesce rapid saves (e.g. multiple config fields changed)
         embassy_time::Timer::after_millis(500).await;
 
-        // Snapshot the config under lock. Use a smaller buffer than
-        // ConfigManager::load/save to avoid stack overflow in the task.
-        let mut json_buf = [0u8; 4096];
+        // SAFETY: this task is the sole writer; embassy cooperative scheduling
+        // means the await points are the only places another task can run, and
+        // no other task touches CONFIG_SAVE_BUF.
+        #[allow(static_mut_refs)]
+        let json_buf: &mut [u8; JSON_BUF_SIZE] = unsafe { &mut CONFIG_SAVE_BUF };
+
         let json_len = {
             let guard = crate::http::CONFIG.lock().await;
             match guard.as_ref() {
-                Some(c) => match serde_json_core::to_slice(c, &mut json_buf) {
+                Some(c) => match serde_json_core::to_slice(c, json_buf) {
                     Ok(n) => n,
                     Err(_) => {
                         error!("config: JSON serialise error, not saving");
@@ -279,7 +290,7 @@ pub async fn config_save_task() {
             }
             let aligned_len = (json_len + 255) & !255;
             if flash
-                .blocking_write(CONFIG_OFFSET, &json_buf[..aligned_len])
+                .blocking_write(CONFIG_OFFSET, &json_buf[..aligned_len.min(JSON_BUF_SIZE)])
                 .is_err()
             {
                 error!("config: flash write error");

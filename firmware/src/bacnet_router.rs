@@ -248,17 +248,22 @@ async fn handle_read_property_request(
         return;
     }
 
+    // These string literals are known-good ASCII and will always fit in String<64>.
     let value = match req.property_id {
         PropertyId::ObjectName => {
-            BacnetValue::CharString(heapless::String::try_from("BACnet Bridge").unwrap())
+            let mut s: heapless::String<64> = heapless::String::new();
+            let _ = s.push_str("BACnet Bridge");
+            BacnetValue::CharString(s)
         }
         PropertyId::ObjectIdentifier => {
             BacnetValue::ObjectIdentifier(ObjectId::new(ObjectType::Device, BRIDGE_DEVICE_ID))
         }
         PropertyId::ObjectType => BacnetValue::Enumerated(8), // Device
-        PropertyId::Description => BacnetValue::CharString(
-            heapless::String::try_from("Icomb Place BACnet Bridge").unwrap(),
-        ),
+        PropertyId::Description => {
+            let mut s: heapless::String<64> = heapless::String::new();
+            let _ = s.push_str("Icomb Place BACnet");
+            BacnetValue::CharString(s)
+        }
         _ => {
             // Send error: unknown property
             let mut buf = [0u8; 16];

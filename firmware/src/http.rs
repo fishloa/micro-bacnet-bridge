@@ -907,27 +907,19 @@ impl RequestHandlerService<()> for AuthLoginHandler {
                 };
 
                 match matched_role {
-                    Some(bridge_core::config::UserRole::Admin) => {
+                    Some(r) => {
+                        let mut resp: heapless::String<96> = heapless::String::new();
+                        let _ = core::fmt::write(
+                            &mut resp,
+                            format_args!(
+                                "{{\"ok\":true,\"token\":\"session-token\",\"role\":\"{}\"}}",
+                                role_str(r),
+                            ),
+                        );
                         send_json(
                             request.body_connection.finalize().await?,
                             response_writer,
-                            b"{\"ok\":true,\"token\":\"session-token\",\"role\":\"admin\"}",
-                        )
-                        .await
-                    }
-                    Some(bridge_core::config::UserRole::Operator) => {
-                        send_json(
-                            request.body_connection.finalize().await?,
-                            response_writer,
-                            b"{\"ok\":true,\"token\":\"session-token\",\"role\":\"operator\"}",
-                        )
-                        .await
-                    }
-                    Some(bridge_core::config::UserRole::Viewer) => {
-                        send_json(
-                            request.body_connection.finalize().await?,
-                            response_writer,
-                            b"{\"ok\":true,\"token\":\"session-token\",\"role\":\"viewer\"}",
+                            resp.as_bytes(),
                         )
                         .await
                     }
@@ -994,20 +986,16 @@ impl RequestHandlerService<()> for GetUsersHandler {
                     let _ = body.extend_from_slice(b",");
                 }
                 first = false;
-                let role_str = match user.role {
-                    bridge_core::config::UserRole::Admin => "admin",
-                    bridge_core::config::UserRole::Operator => "operator",
-                    bridge_core::config::UserRole::Viewer => "Viewer",
-                };
+                let role_label = role_str(user.role);
                 let mut escaped_name: heapless::String<64> = heapless::String::new();
-                json_escape_str_short(user.username.as_str(), &mut escaped_name);
+                json_escape_into(user.username.as_str(), &mut escaped_name);
                 let mut entry: heapless::String<128> = heapless::String::new();
                 let _ = core::fmt::write(
                     &mut entry,
                     format_args!(
                         "{{\"username\":\"{}\",\"role\":\"{}\"}}",
                         escaped_name.as_str(),
-                        role_str,
+                        role_label,
                     ),
                 );
                 let _ = body.extend_from_slice(entry.as_bytes());
@@ -1060,11 +1048,7 @@ impl RequestHandlerService<()> for PostUsersHandler {
                         .await;
                 }
 
-                let role = match role_str {
-                    "admin" | "Admin" => bridge_core::config::UserRole::Admin,
-                    "operator" | "Operator" => bridge_core::config::UserRole::Operator,
-                    _ => bridge_core::config::UserRole::Viewer,
-                };
+                let role = parse_role(role_str);
 
                 // Generate a random 32-byte salt using the hardware ROSC RNG.
                 let mut salt = [0u8; 32];
@@ -1140,22 +1124,18 @@ impl RequestHandlerService<()> for GetTokensHandler {
                     let _ = body.extend_from_slice(b",");
                 }
                 first = false;
-                let role_str = match token.role {
-                    bridge_core::config::UserRole::Admin => "admin",
-                    bridge_core::config::UserRole::Operator => "operator",
-                    bridge_core::config::UserRole::Viewer => "Viewer",
-                };
+                let role_label = role_str(token.role);
                 let mut escaped_name: heapless::String<64> = heapless::String::new();
-                json_escape_str_short(token.name.as_str(), &mut escaped_name);
+                json_escape_into(token.name.as_str(), &mut escaped_name);
                 let mut escaped_created_by: heapless::String<64> = heapless::String::new();
-                json_escape_str_short(token.created_by.as_str(), &mut escaped_created_by);
+                json_escape_into(token.created_by.as_str(), &mut escaped_created_by);
                 let mut entry: heapless::String<192> = heapless::String::new();
                 let _ = core::fmt::write(
                     &mut entry,
                     format_args!(
                         "{{\"name\":\"{}\",\"role\":\"{}\",\"createdBy\":\"{}\"}}",
                         escaped_name.as_str(),
-                        role_str,
+                        role_label,
                         escaped_created_by.as_str(),
                     ),
                 );
@@ -1202,11 +1182,7 @@ impl RequestHandlerService<()> for PostTokensHandler {
                 let role_str = extract_json_str(body_str, "role").unwrap_or("admin");
                 let created_by_str = extract_json_str(body_str, "createdBy").unwrap_or("admin");
 
-                let role = match role_str {
-                    "admin" | "Admin" => bridge_core::config::UserRole::Admin,
-                    "operator" | "Operator" => bridge_core::config::UserRole::Operator,
-                    _ => bridge_core::config::UserRole::Viewer,
-                };
+                let role = parse_role(role_str);
 
                 // Generate 32 random bytes → encode as 64 hex chars (the plaintext token).
                 let mut raw = [0u8; 32];
@@ -1281,11 +1257,18 @@ impl RequestHandlerService<()> for PostTokensHandler {
 // Bulk config export / import
 // ---------------------------------------------------------------------------
 
+/// Static 2 KiB buffer for bulk config JSON serialisation.
+///
+/// Protected by [`BULK_CONFIG_BUF_MUTEX`] so that concurrent requests to
+/// `GET /api/v1/config` are serialised and the buffer is never aliased.
+/// Using a static avoids putting 2 KiB on an async task stack.
+static BULK_CONFIG_BUF: Mutex<CriticalSectionRawMutex, [u8; 2048]> = Mutex::new([0u8; 2048]);
+
 /// GET /api/v1/config — export full config as JSON.
 ///
 /// Requires Admin role.  Returns the entire `BridgeConfig` struct serialised to JSON.
-/// Uses a 2 KB on-stack buffer. Only one instance of this handler runs at a time
-/// (picoserve serialises access per connection), so the stack cost is bounded.
+/// Uses a mutex-protected static 2 KiB buffer so the buffer never sits on an
+/// async task stack (which would bloat every Future suspend point).
 struct GetBulkConfigHandler;
 
 impl RequestHandlerService<()> for GetBulkConfigHandler {
@@ -1296,15 +1279,16 @@ impl RequestHandlerService<()> for GetBulkConfigHandler {
         request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        // 2 KB buffer is sufficient for a fully-populated BridgeConfig.
-        let mut json_buf = [0u8; 2048];
+        // Acquire the scratch buffer first, then the config — consistent ordering.
+        let mut json_buf = BULK_CONFIG_BUF.lock().await;
         let json_len = {
             let guard = CONFIG.lock().await;
             match guard.as_ref() {
-                Some(cfg) => match serde_json_core::to_slice(cfg, &mut json_buf) {
+                Some(cfg) => match serde_json_core::to_slice(cfg, &mut *json_buf) {
                     Ok(n) => n,
                     Err(_) => {
                         drop(guard);
+                        drop(json_buf);
                         return (StatusCode::INTERNAL_SERVER_ERROR, "config too large\r\n")
                             .write_to(request.body_connection.finalize().await?, response_writer)
                             .await;
@@ -1312,6 +1296,7 @@ impl RequestHandlerService<()> for GetBulkConfigHandler {
                 },
                 None => {
                     drop(guard);
+                    drop(json_buf);
                     return (StatusCode::NOT_FOUND, "config not ready\r\n")
                         .write_to(request.body_connection.finalize().await?, response_writer)
                         .await;
@@ -1319,10 +1304,16 @@ impl RequestHandlerService<()> for GetBulkConfigHandler {
             }
         };
 
+        // Copy the slice to a heapless vec so we can release the mutex before
+        // the (potentially slow) network send.
+        let mut out: heapless::Vec<u8, 2048> = heapless::Vec::new();
+        let _ = out.extend_from_slice(&json_buf[..json_len]);
+        drop(json_buf);
+
         send_json(
             request.body_connection.finalize().await?,
             response_writer,
-            &json_buf[..json_len],
+            out.as_slice(),
         )
         .await
     }
@@ -1819,43 +1810,29 @@ fn extract_json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
 }
 
 // ---------------------------------------------------------------------------
-// Short-string JSON escaping (for heapless::String<64>)
+// Hex encoding helper
 // ---------------------------------------------------------------------------
 
-/// Write `s` into `out` (heapless::String<64>) with JSON string escaping.
+/// Parse a role string ("admin", "operator", "viewer") into a [`UserRole`].
 ///
-/// Used for username and token name fields which are bounded at 32 chars.
-fn json_escape_str_short(s: &str, out: &mut heapless::String<64>) {
-    for ch in s.chars() {
-        match ch {
-            '"' => {
-                let _ = out.push_str("\\\"");
-            }
-            '\\' => {
-                let _ = out.push_str("\\\\");
-            }
-            '\n' => {
-                let _ = out.push_str("\\n");
-            }
-            '\r' => {
-                let _ = out.push_str("\\r");
-            }
-            '\t' => {
-                let _ = out.push_str("\\t");
-            }
-            c if (c as u32) < 0x20 => {
-                // Control chars: skip (rare in names)
-            }
-            c => {
-                let _ = out.push(c);
-            }
-        }
+/// Accepts both title-case and lowercase variants.  Defaults to `Viewer` for
+/// any unrecognised input.
+fn parse_role(role_str: &str) -> bridge_core::config::UserRole {
+    match role_str {
+        "admin" | "Admin" => bridge_core::config::UserRole::Admin,
+        "operator" | "Operator" => bridge_core::config::UserRole::Operator,
+        _ => bridge_core::config::UserRole::Viewer,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hex encoding helper
-// ---------------------------------------------------------------------------
+/// Serialize a [`UserRole`] to its canonical lowercase string.
+fn role_str(role: bridge_core::config::UserRole) -> &'static str {
+    match role {
+        bridge_core::config::UserRole::Admin => "admin",
+        bridge_core::config::UserRole::Operator => "operator",
+        bridge_core::config::UserRole::Viewer => "viewer",
+    }
+}
 
 /// Convert a nibble (0–15) to its lowercase hex character.
 fn hex_nibble_char(n: u8) -> char {
@@ -1869,11 +1846,15 @@ fn hex_nibble_char(n: u8) -> char {
 // JSON string escaping
 // ---------------------------------------------------------------------------
 
-/// Write `s` into `out` with JSON string escaping.
+/// Write `s` into any `heapless::String` with JSON string escaping.
 ///
-/// Escapes `"` → `\"`, `\` → `\\`, and ASCII control characters to `\uXXXX`.
-/// Returns `true` if the entire string fit; `false` on overflow.
-fn json_escape_into(s: &str, out: &mut heapless::String<256>) -> bool {
+/// Escapes `"` → `\"`, `\` → `\\`, newlines/tabs, and encodes other ASCII
+/// control characters as `\uXXXX`.  Returns `true` if the entire string fit;
+/// `false` on overflow (the output may be partially written).
+///
+/// This single generic function replaces both the previous `json_escape_into`
+/// (`String<256>`) and `json_escape_into` (`String<64>`) helpers.
+fn json_escape_into<const N: usize>(s: &str, out: &mut heapless::String<N>) -> bool {
     for ch in s.chars() {
         let ok = match ch {
             '"' => out.push_str("\\\"").is_ok(),

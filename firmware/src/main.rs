@@ -194,7 +194,11 @@ async fn main(spawner: Spawner) {
     );
 
     let cs = Output::new(p.PIN_17, Level::High);
-    let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay).unwrap();
+    // ExclusiveDevice::new() only fails if the bus has an active transaction,
+    // which is impossible here since we just constructed it.  Use expect() to
+    // produce a clear panic message rather than a silent unwrap().
+    let spi_dev = ExclusiveDevice::new(spi_bus, cs, embassy_time::Delay)
+        .expect("SPI ExclusiveDevice init failed");
 
     let w5500_int = embassy_rp::gpio::Input::new(p.PIN_21, embassy_rp::gpio::Pull::Up);
     let mut w5500_rst = Output::new(p.PIN_20, Level::High);
@@ -260,7 +264,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(mdns::mdns_task(stack)).unwrap();
     spawner.spawn(bacnet_ip::bacnet_ip_task(stack)).unwrap();
     spawner.spawn(bacnet_router::bacnet_router_task()).unwrap();
-    // spawner.spawn(config::config_save_task()).unwrap(); // temporarily disabled
+    spawner.spawn(config::config_save_task()).unwrap();
     spawner.spawn(ntp::ntp_task(stack)).unwrap();
     spawner.spawn(snmp::snmp_task(stack)).unwrap();
     spawner.spawn(mqtt::mqtt_task(stack)).unwrap();

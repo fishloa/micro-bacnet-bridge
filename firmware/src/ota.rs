@@ -209,13 +209,11 @@ async fn handle_uf2_stream<R: PicoRead>(
     let mut blocks_written = 0u32;
 
     let mut block_buf = [0u8; UF2_BLOCK_SIZE];
-    #[allow(unused_assignments)]
-    let mut block_cursor = 0usize;
 
     let mut remaining = content_length - already_received;
     let first_len = first_chunk.len().min(UF2_BLOCK_SIZE);
     block_buf[..first_len].copy_from_slice(&first_chunk[..first_len]);
-    block_cursor = first_len;
+    let mut block_cursor = first_len;
 
     let mut extra_cursor = first_len;
 
@@ -234,24 +232,21 @@ async fn handle_uf2_stream<R: PicoRead>(
                         return Err("UF2 block would overwrite config area");
                     }
 
-                    // Erase the sector if not already erased
+                    // Erase the sector if not already erased, then write — all under
+                    // one lock acquisition to avoid releasing and re-taking the mutex.
                     let sector_num = (write_addr / SECTOR_SIZE as u32) as i32;
-                    if sector_num > highest_erased_sector {
-                        let erase_addr = sector_num as u32 * SECTOR_SIZE as u32;
-                        let mut fg = FLASH.lock().await;
-                        if let Some(flash) = fg.as_mut() {
+                    let mut fg = FLASH.lock().await;
+                    if let Some(flash) = fg.as_mut() {
+                        if sector_num > highest_erased_sector {
+                            let erase_addr = sector_num as u32 * SECTOR_SIZE as u32;
                             if flash
                                 .blocking_erase(erase_addr, erase_addr + SECTOR_SIZE as u32)
                                 .is_err()
                             {
                                 return Err("Flash erase error during UF2 staging");
                             }
+                            highest_erased_sector = sector_num;
                         }
-                        highest_erased_sector = sector_num;
-                    }
-
-                    let mut fg = FLASH.lock().await;
-                    if let Some(flash) = fg.as_mut() {
                         if flash.blocking_write(write_addr, payload).is_err() {
                             return Err("Flash write error during UF2 staging");
                         }
