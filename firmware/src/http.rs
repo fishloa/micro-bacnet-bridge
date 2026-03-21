@@ -72,6 +72,12 @@ use picoserve::{
 /// Initialised to `None`; main sets it before spawning tasks.
 pub static CONFIG: Mutex<CriticalSectionRawMutex, Option<BridgeConfig>> = Mutex::new(None);
 
+/// Current IP address packed as a big-endian `u32` (octet 0 in bits 31–24).
+///
+/// Updated by `http_task` once DHCP/static IP is resolved.  Atomically
+/// readable by the status handler without holding any mutex.
+pub static CURRENT_IP: AtomicU32 = AtomicU32::new(0);
+
 /// Ethernet MAC address stored as two `AtomicU32` values (high and low word).
 ///
 /// `MAC_ADDR_HI` stores the upper 2 bytes of the MAC (octets 0–1) in bits 15–0.
@@ -234,6 +240,17 @@ static APP_ROUTER: static_cell::StaticCell<AppRouter> = static_cell::StaticCell:
 pub async fn http_task(stack: Stack<'static>, spawner: embassy_executor::Spawner) {
     stack.wait_config_up().await;
     info!("http: network up, building router");
+
+    // Publish the current IP so the status handler can read it without
+    // needing a reference to the Stack (which isn't Sync).
+    if let Some(cfg) = stack.config_v4() {
+        let oct = cfg.address.address().octets();
+        let packed = ((oct[0] as u32) << 24)
+            | ((oct[1] as u32) << 16)
+            | ((oct[2] as u32) << 8)
+            | (oct[3] as u32);
+        CURRENT_IP.store(packed, core::sync::atomic::Ordering::Relaxed);
+    }
 
     let app: &'static AppRouter = APP_ROUTER.init(HttpApp.build_app());
 
@@ -602,6 +619,7 @@ impl RequestHandlerService<()> for PutNetworkConfigHandler {
                         if let Some(cfg) = CONFIG.lock().await.as_mut() {
                             cfg.network = net_cfg;
                         }
+                        crate::config::request_save();
                         (StatusCode::NO_CONTENT, NoContent)
                             .write_to(request.body_connection.finalize().await?, response_writer)
                             .await
@@ -690,6 +708,7 @@ impl RequestHandlerService<()> for PutBacnetConfigHandler {
                         if let Some(cfg) = CONFIG.lock().await.as_mut() {
                             cfg.bacnet = bac_cfg;
                         }
+                        crate::config::request_save();
                         (StatusCode::NO_CONTENT, NoContent)
                             .write_to(request.body_connection.finalize().await?, response_writer)
                             .await
@@ -729,16 +748,30 @@ impl RequestHandlerService<()> for GetStatusHandler {
         let (baud, frames_rx, frames_tx, errors_rx, bus_active, detecting, loopback) =
             crate::core1::mstp_status();
 
+        // Read current IP from the atomic snapshot set by http_task.
+        let ip_packed = CURRENT_IP.load(core::sync::atomic::Ordering::Relaxed);
+        let ip_bytes: [u8; 4] = [
+            ((ip_packed >> 24) & 0xFF) as u8,
+            ((ip_packed >> 16) & 0xFF) as u8,
+            ((ip_packed >> 8) & 0xFF) as u8,
+            (ip_packed & 0xFF) as u8,
+        ];
+
         let mut body: heapless::String<512> = heapless::String::new();
         let _ = core::fmt::write(
             &mut body,
             format_args!(
                 concat!(
-                    "{{\"uptime\":{},\"deviceCount\":{},\"vendor\":\"Icomb Place\",\"firmware\":\"{}\",",
+                    "{{\"uptime\":{},\"ip\":\"{}.{}.{}.{}\",\"deviceCount\":{},",
+                    "\"vendor\":\"Icomb Place\",\"firmware\":\"{}\",",
                     "\"serial\":{{\"baud\":{},\"parity\":\"8N1\",\"framesRx\":{},\"framesTx\":{},",
                     "\"errorsRx\":{},\"busActive\":{},\"detecting\":{},\"loopback\":{}}}}}"
                 ),
                 uptime_s,
+                ip_bytes[0],
+                ip_bytes[1],
+                ip_bytes[2],
+                ip_bytes[3],
                 device_count,
                 env!("FIRMWARE_VERSION"),
                 baud,
@@ -1410,8 +1443,21 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
         let path_str = path.encoded();
         let method = request.parts.method();
 
-        // PUT /api/v1/config/* — accept any config PUT as a no-op stub
+        // Auth check for mutation methods (PUT, POST, DELETE).
+        // GET requests are read-only and always allowed.
+        if method == "PUT" || method == "POST" || method == "DELETE" {
+            if !bearer_token_ok(request.parts.headers()).await {
+                return (StatusCode::UNAUTHORIZED, "Unauthorized\r\n")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await;
+            }
+        }
+
+        // PUT /api/v1/config/* — accept any config PUT as a no-op stub.
+        // Still signal a save so callers get consistent persistence behaviour
+        // even for endpoints that don't yet parse their body.
         if method == "PUT" && path_str.starts_with("/api/v1/config/") {
+            crate::config::request_save();
             return (StatusCode::NO_CONTENT, NoContent)
                 .write_to(request.body_connection.finalize().await?, response_writer)
                 .await;
@@ -1430,24 +1476,44 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
             .await;
         }
 
-        // DELETE /api/v1/users/{id} — admin only stub
-        if method == "DELETE" && path_str.starts_with("/api/v1/users/") {
-            return send_json(
-                request.body_connection.finalize().await?,
-                response_writer,
-                b"{\"ok\":true}",
-            )
-            .await;
+        // DELETE /api/v1/users/{username} — remove user from config
+        if method == "DELETE" {
+            if let Some(username) = path_str.strip_prefix("/api/v1/users/") {
+                if !username.is_empty() {
+                    let mut guard = CONFIG.lock().await;
+                    if let Some(cfg) = guard.as_mut() {
+                        cfg.users.retain(|u| u.username.as_str() != username);
+                    }
+                    drop(guard);
+                    crate::config::request_save();
+                    return send_json(
+                        request.body_connection.finalize().await?,
+                        response_writer,
+                        b"{\"ok\":true}",
+                    )
+                    .await;
+                }
+            }
         }
 
-        // DELETE /api/v1/tokens/{id} — admin only stub
-        if method == "DELETE" && path_str.starts_with("/api/v1/tokens/") {
-            return send_json(
-                request.body_connection.finalize().await?,
-                response_writer,
-                b"{\"ok\":true}",
-            )
-            .await;
+        // DELETE /api/v1/tokens/{name} — remove token from config
+        if method == "DELETE" {
+            if let Some(token_name) = path_str.strip_prefix("/api/v1/tokens/") {
+                if !token_name.is_empty() {
+                    let mut guard = CONFIG.lock().await;
+                    if let Some(cfg) = guard.as_mut() {
+                        cfg.tokens.retain(|t| t.name.as_str() != token_name);
+                    }
+                    drop(guard);
+                    crate::config::request_save();
+                    return send_json(
+                        request.body_connection.finalize().await?,
+                        response_writer,
+                        b"{\"ok\":true}",
+                    )
+                    .await;
+                }
+            }
         }
 
         // GET /_app/* — immutable SvelteKit assets
@@ -1578,6 +1644,52 @@ async fn send_gzip_asset<R: Read, W: ResponseWriter<Error = R::Error>>(
         .with_header("Cache-Control", cache)
         .write_to(connection, response_writer)
         .await
+}
+
+// ---------------------------------------------------------------------------
+// Auth helper
+// ---------------------------------------------------------------------------
+
+/// Validate a `Bearer` token from the `Authorization` header.
+///
+/// Returns `true` if:
+/// - The device is unprovisioned (`!cfg.provisioned`) — setup mode allows all
+///   requests through so the operator can complete first-boot setup.
+/// - A valid `Authorization: Bearer <token>` header is present and the token
+///   hash matches one of the stored API tokens.
+///
+/// Returns `false` if the device is provisioned but no valid token was supplied.
+async fn bearer_token_ok(headers: picoserve::request::Headers<'_>) -> bool {
+    // Extract and hash the bearer token from the header (if present).
+    let maybe_hash: Option<[u8; 32]> = match headers.get("Authorization") {
+        Some(v) => {
+            let v_str = match v.as_str() {
+                Ok(s) => s,
+                Err(_) => return false,
+            };
+            match v_str.strip_prefix("Bearer ") {
+                Some(t) => Some(bridge_core::auth::hash_token(t.as_bytes())),
+                None => return false,
+            }
+        }
+        None => None,
+    };
+
+    let guard = CONFIG.lock().await;
+    match guard.as_ref() {
+        None => false,
+        Some(cfg) => {
+            // Unprovisioned: allow everything (setup mode).
+            if !cfg.provisioned {
+                return true;
+            }
+            // Provisioned: require a valid bearer token.
+            match maybe_hash {
+                None => false,
+                Some(hash) => cfg.tokens.iter().any(|t| t.token_hash == hash),
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

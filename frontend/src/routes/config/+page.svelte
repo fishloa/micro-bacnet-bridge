@@ -82,14 +82,14 @@
 	};
 
 	onMount(async () => {
-		[net, bacnet, ntp, syslog, mqtt, snmp] = await Promise.all([
-			api.getNetworkConfig(),
-			api.getBacnetConfig(),
-			api.getNtpConfig(),
-			api.getSyslogConfig(),
-			api.getMqttConfig(),
-			api.getSnmpConfig(),
-		]);
+		// Sequential fetches to avoid opening more TCP connections than the
+		// W5500 has sockets (4). Each await completes before the next begins.
+		net = await api.getNetworkConfig();
+		bacnet = await api.getBacnetConfig();
+		ntp = await api.getNtpConfig();
+		syslog = await api.getSyslogConfig();
+		mqtt = await api.getMqttConfig();
+		snmp = await api.getSnmpConfig();
 		while (ntp.servers.length < 3) ntp.servers = [...ntp.servers, ''];
 		loaded = true;
 		Object.values(cards).forEach(c => c.snap());
