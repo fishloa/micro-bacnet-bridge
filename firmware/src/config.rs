@@ -219,3 +219,73 @@ impl ConfigManager {
         info!("config: saved {} bytes to flash", json_len);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Async config save task
+// ---------------------------------------------------------------------------
+
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::signal::Signal;
+
+/// Signal to wake the config save task. Any task can call `request_save()`
+/// and the dedicated save task will persist the config to flash.
+static SAVE_SIGNAL: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+
+/// Request that the current in-memory config be saved to flash.
+/// Non-blocking — the actual save happens asynchronously in `config_save_task`.
+pub fn request_save() {
+    SAVE_SIGNAL.signal(());
+}
+
+/// Dedicated task that waits for save requests and writes config to flash.
+/// This keeps the 2 KB JSON buffer off the web task stacks.
+#[embassy_executor::task]
+pub async fn config_save_task() {
+    loop {
+        SAVE_SIGNAL.wait().await;
+        SAVE_SIGNAL.reset();
+
+        // Brief delay to coalesce rapid saves (e.g. multiple config fields changed)
+        embassy_time::Timer::after_millis(500).await;
+
+        // Snapshot the config under lock. Use a smaller buffer than
+        // ConfigManager::load/save to avoid stack overflow in the task.
+        let mut json_buf = [0u8; 4096];
+        let json_len = {
+            let guard = crate::http::CONFIG.lock().await;
+            match guard.as_ref() {
+                Some(c) => match serde_json_core::to_slice(c, &mut json_buf) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("config: JSON serialise error, not saving");
+                        continue;
+                    }
+                },
+                None => continue,
+            }
+        };
+
+        // Pause Core 1 and write flash
+        let _pause = crate::core1::pause_core1_for_flash();
+
+        let mut flash_guard = crate::ota::FLASH.lock().await;
+        if let Some(flash) = flash_guard.as_mut() {
+            if flash
+                .blocking_erase(CONFIG_OFFSET, CONFIG_OFFSET + CONFIG_SIZE as u32)
+                .is_err()
+            {
+                error!("config: flash erase error");
+                continue;
+            }
+            let aligned_len = (json_len + 255) & !255;
+            if flash
+                .blocking_write(CONFIG_OFFSET, &json_buf[..aligned_len])
+                .is_err()
+            {
+                error!("config: flash write error");
+                continue;
+            }
+            info!("config: saved {} bytes to flash", json_len);
+        }
+    }
+}

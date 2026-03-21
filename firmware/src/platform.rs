@@ -24,17 +24,42 @@ pub const CONFIG_SIZE: usize = 32 * 1024;
 /// On 2MB flash: 0x1FF000.
 pub const IDENTITY_OFFSET: u32 = (FLASH_SIZE - 4 * 1024) as u32;
 
-/// OTA firmware write start offset. The full binary including vector table
-/// and boot block is uploaded and written from the start of flash.
-pub const FIRMWARE_OFFSET: u32 = 0;
+/// Slot A: firmware at flash offset 0 (default boot location).
+pub const SLOT_A_OFFSET: u32 = 0;
+
+/// Slot B: alternate firmware location for A/B OTA.
+pub const SLOT_B_OFFSET: u32 = (FLASH_SIZE / 2) as u32; // 1 MB
 
 /// Flash offset beyond which OTA must not write (protects config + identity).
 pub const PROTECTED_OFFSET: u32 = CONFIG_OFFSET;
 
-/// OTA staging area — upper half of flash, before the config region.
+/// XIP base address for address comparisons.
+pub const XIP_BASE: u32 = 0x10000000;
+
 /// Layout (2MB flash):
-///   [Firmware: 0x000000-0x0FFFFF] (1MB max)
-///   [Staging:  0x100000-0x1EFFFF] (960KB)
+///   [Slot A:   0x000000-0x0FFFFF] (1MB)
+///   [Slot B:   0x100000-0x1EFFFF] (960KB)
 ///   [Config:   0x1F0000-0x1FBFFF] (48KB)
 ///   [Identity: 0x1FF000-0x1FFFFF] (4KB)
-pub const STAGING_OFFSET: u32 = (FLASH_SIZE / 2) as u32; // 1 MB
+///
+/// OTA writes to the INACTIVE slot, then reboots into it.
+/// After probe flash, Slot A is active.
+/// After first OTA, Slot B is active.
+/// After second OTA, Slot A is active (via normal reboot).
+
+/// Determine which slot we're currently running from.
+/// Returns the offset of the INACTIVE slot (where OTA should write).
+#[inline]
+pub fn ota_target_slot() -> u32 {
+    // Check if our code is running from Slot A or Slot B.
+    // Function address will be in 0x100xxxxx (Slot A) or 0x101xxxxx (Slot B).
+    let pc: u32;
+    unsafe { core::arch::asm!("mov {}, pc", out(reg) pc) };
+    if pc < XIP_BASE + SLOT_B_OFFSET {
+        // Running from Slot A → write to Slot B
+        SLOT_B_OFFSET
+    } else {
+        // Running from Slot B → write to Slot A
+        SLOT_A_OFFSET
+    }
+}

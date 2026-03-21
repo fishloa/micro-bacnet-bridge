@@ -79,20 +79,6 @@ export interface ApiToken {
 	createdBy: string;
 }
 
-export interface TlsStatus {
-	enabled: boolean;
-	subject: string;
-	issuer: string;
-	serial: string;
-	notBefore: string;
-	notAfter: string;
-	signatureAlgorithm: string;
-	publicKeyAlgorithm: string;
-	publicKeySize: string;
-	fingerprint: string;
-	sanNames: string[];
-}
-
 export interface OtaConfig {
 	auto_update: boolean;
 	manifest_url: string;
@@ -340,20 +326,6 @@ const MOCK_TOKENS: ApiToken[] = [
 	{ id: 'tok-2', name: 'Monitoring', role: 'viewer', createdBy: 'admin' },
 ];
 
-const MOCK_TLS_STATUS: TlsStatus = {
-	enabled: false,
-	subject: '',
-	issuer: '',
-	serial: '',
-	notBefore: '',
-	notAfter: '',
-	signatureAlgorithm: '',
-	publicKeyAlgorithm: '',
-	publicKeySize: '',
-	fingerprint: '',
-	sanNames: [],
-};
-
 const MOCK_NTP_CONFIG: NtpConfig = {
 	enabled: true,
 	use_dhcp_servers: true,
@@ -553,18 +525,8 @@ export const api = {
 	revokeToken: (id: string) =>
 		del(`/tokens/${id}`, { ok: true }),
 
-	// ---- TLS ----
-	getTlsStatus: () => get('/tls', MOCK_TLS_STATUS),
-	tlsCsr: (): Promise<{ ok: boolean; csr: string }> =>
-		post('/tls/csr', {}, { ok: true, csr: '-----BEGIN CERTIFICATE REQUEST-----\n(dev stub CSR)\n-----END CERTIFICATE REQUEST-----\n' }),
-	tlsUploadCert: (certPem: string) =>
-		post('/tls/cert', { cert: certPem }, { ok: true }),
-	tlsUploadKey: (keyPem: string) =>
-		post('/tls/key', { key: keyPem }, { ok: true }),
-	tlsSelfSigned: () =>
-		post('/tls/self-signed', {}, { ok: true }),
-	tlsDisable: () =>
-		del('/tls', { ok: true }),
+	// TLS server removed — admin UI is plain HTTP on trusted LAN.
+	// TLS client for MQTT is configured via the MQTT config page.
 
 	// ---- Bulk config ----
 	getBulkConfig: () =>

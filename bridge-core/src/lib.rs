@@ -24,9 +24,11 @@
 //! - [`mqtt`]      — MQTT 3.1.1 publish-only client codec + HA auto-discovery
 //! - [`tls`]       — TLS certificate management types (PEM→DER, CN extraction)
 
+pub mod apdu;
 pub mod auth;
 pub mod bacnet;
 pub mod bridge;
+pub mod bvlc;
 pub mod config;
 pub mod error;
 pub mod ipc;
@@ -41,12 +43,24 @@ pub mod syslog;
 pub mod tls;
 
 // Top-level re-exports of the most commonly used types.
+pub use apdu::{
+    decode_apdu, encode_error, encode_i_am, encode_read_property, encode_read_property_ack,
+    encode_simple_ack, encode_subscribe_cov, encode_ucov_notification, encode_who_is,
+    encode_write_property, CovNotification, DecodedApdu, IAmData, ReadPropertyAck,
+    ReadPropertyRequest, SubscribeCovRequest, WhoIsRequest, WritePropertyRequest, SERVICE_I_AM,
+    SERVICE_READ_PROPERTY, SERVICE_SUBSCRIBE_COV, SERVICE_UCOV_NOTIFICATION, SERVICE_WHO_IS,
+    SERVICE_WRITE_PROPERTY,
+};
 pub use bacnet::{
     convert_for_exposure, convert_from_bacnet, convert_to_bacnet, convert_write_for_exposure,
     ApduType, BacnetValue, EngineeringUnits, Exposure, ObjectId, ObjectType, PointConfig,
     PropertyId, ServiceChoice,
 };
 pub use bridge::{BridgeStateInner, DeviceEntry, PointEntry, MAX_DEVICES, MAX_POINTS_PER_DEVICE};
+pub use bvlc::{
+    decode_bvlc, encode_bvlc, BvlcHeader, BACNET_IP_PORT, BVLC_HEADER_SIZE,
+    BVLC_ORIGINAL_BROADCAST, BVLC_ORIGINAL_UNICAST, BVLC_TYPE,
+};
 pub use config::{
     BacnetDeviceConfig, BridgeConfig, Convertor, MqttConfig, NetworkConfig, NtpConfig, OtaConfig,
     PointMode, PointRule, Processor, SnmpConfig, SyslogConfig, TlsConfig, TokenConfig, UserConfig,

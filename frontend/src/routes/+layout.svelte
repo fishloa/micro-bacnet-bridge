@@ -1,18 +1,25 @@
 <script lang="ts">
 	import '../app.css';
 	import { page } from '$app/state';
+	import LayoutDashboard from 'lucide-svelte/icons/layout-dashboard';
+	import Settings from 'lucide-svelte/icons/settings';
+	import CircuitBoard from 'lucide-svelte/icons/circuit-board';
+	import ArrowRightLeft from 'lucide-svelte/icons/arrow-right-left';
+	import Users from 'lucide-svelte/icons/users';
+	import KeyRound from 'lucide-svelte/icons/key-round';
+	import Cpu from 'lucide-svelte/icons/cpu';
+	import Info from 'lucide-svelte/icons/info';
 
 	let { children } = $props();
 
 	const navItems = [
-		{ href: '/', icon: '⊞', label: 'Dashboard' },
-		{ href: '/config', icon: '⚙', label: 'Config' },
-		{ href: '/points', icon: '⊡', label: 'Points' },
-		{ href: '/convertors', icon: '⊛', label: 'Convertors' },
-		{ href: '/users', icon: '⊕', label: 'Users' },
-		{ href: '/tokens', icon: '⊗', label: 'Tokens' },
-		{ href: '/tls', icon: '⊘', label: 'TLS' },
-		{ href: '/firmware', icon: '⊙', label: 'Firmware' },
+		{ href: '/', icon: LayoutDashboard, label: 'Dashboard' },
+		{ href: '/config', icon: Settings, label: 'Config' },
+		{ href: '/points', icon: CircuitBoard, label: 'Points' },
+		{ href: '/convertors', icon: ArrowRightLeft, label: 'Convertors' },
+		{ href: '/users', icon: Users, label: 'Users' },
+		{ href: '/tokens', icon: KeyRound, label: 'Tokens' },
+		{ href: '/firmware', icon: Cpu, label: 'Firmware' },
 	];
 </script>
 
@@ -24,10 +31,14 @@
 				href={item.href}
 				class:active={page.url.pathname === item.href}
 				title={item.label}
-			>{item.icon}</a>
+			>
+				<item.icon size={22} strokeWidth={1.5} />
+			</a>
 		{/each}
 		<div class="nav-spacer"></div>
-		<a href="/status" title="System Status" class:active={page.url.pathname === '/status'}>ℹ</a>
+		<a href="/status" title="System Status" class:active={page.url.pathname === '/status'}>
+			<Info size={22} strokeWidth={1.5} />
+		</a>
 	</nav>
 	<main class="app-content">
 		{@render children()}

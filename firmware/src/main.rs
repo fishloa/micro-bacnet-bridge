@@ -16,6 +16,8 @@ pub static PICOTOOL_ENTRIES: [embassy_rp::binary_info::EntryAddr; 4] = [
 ];
 
 mod bacnet_ip;
+#[allow(dead_code)]
+mod bacnet_router;
 mod bridge;
 mod config;
 mod core1;
@@ -52,13 +54,18 @@ bind_interrupts!(struct TrngIrqs {
 // Static allocations for embassy-net stack resources
 // ---------------------------------------------------------------------------
 
-/// Number of sockets the network stack can hold simultaneously.
-/// HTTP (4 workers) + mDNS (1) + BACnet/IP (1) + DHCP internal (1) + NTP (1) +
-/// SNMP (1) + MQTT/TCP (1) + DNS/UDP (1) + Syslog/UDP (1) = 12
-const SOCKET_COUNT: usize = 12;
+/// W5500 hardware socket count (RX and TX).
+/// The W5500 has 8 sockets sharing 16 KB RX + 16 KB TX buffer.
+const W5500_SOCKETS: usize = 4;
+
+/// Number of sockets the embassy-net stack can hold simultaneously.
+/// HTTP (WEB_TASK_POOL_SIZE) + mDNS (1) + BACnet/IP (1) + DHCP internal (1) +
+/// NTP (1) + SNMP (1) + MQTT/TCP (1) + DNS/UDP (1) + Syslog/UDP (1) = pool + 8
+const SOCKET_COUNT: usize = crate::http::WEB_TASK_POOL_SIZE + 8;
 
 static STACK_RESOURCES: StaticCell<StackResources<SOCKET_COUNT>> = StaticCell::new();
-static WIZNET_STATE: StaticCell<embassy_net_wiznet::State<4, 4>> = StaticCell::new();
+static WIZNET_STATE: StaticCell<embassy_net_wiznet::State<W5500_SOCKETS, W5500_SOCKETS>> =
+    StaticCell::new();
 
 // ---------------------------------------------------------------------------
 // Embassy entry point (Core 0)
@@ -200,13 +207,14 @@ async fn main(spawner: Spawner) {
 
     let wiznet_state = WIZNET_STATE.init(embassy_net_wiznet::State::new());
 
-    let (w5500_device, w5500_runner) = embassy_net_wiznet::new::<4, 4, W5500, _, _, _>(
-        mac_addr,
-        wiznet_state,
-        spi_dev,
-        w5500_int,
-        w5500_rst,
-    )
+    let (w5500_device, w5500_runner) = embassy_net_wiznet::new::<
+        W5500_SOCKETS,
+        W5500_SOCKETS,
+        W5500,
+        _,
+        _,
+        _,
+    >(mac_addr, wiznet_state, spi_dev, w5500_int, w5500_rst)
     .await
     .expect("W5500 init failed");
 
@@ -251,6 +259,8 @@ async fn main(spawner: Spawner) {
     spawner.spawn(http::http_task(stack, spawner)).unwrap();
     spawner.spawn(mdns::mdns_task(stack)).unwrap();
     spawner.spawn(bacnet_ip::bacnet_ip_task(stack)).unwrap();
+    spawner.spawn(bacnet_router::bacnet_router_task()).unwrap();
+    // spawner.spawn(config::config_save_task()).unwrap(); // temporarily disabled
     spawner.spawn(ntp::ntp_task(stack)).unwrap();
     spawner.spawn(snmp::snmp_task(stack)).unwrap();
     spawner.spawn(mqtt::mqtt_task(stack)).unwrap();
@@ -312,23 +322,20 @@ fn subnet_mask_to_prefix(mask: [u8; 4]) -> u8 {
 }
 
 /// Copy firmware from staging to slot 0, then reboot.
-///
-/// This function runs from SRAM (.time_critical) with all interrupts disabled.
-/// It reads each sector from the staging area via XIP, then uses embassy-rp's
-/// Reboot into the OTA staging area using `REBOOT_TYPE_FLASH_UPDATE`.
+/// Reboot into the newly-written OTA slot using `REBOOT_TYPE_FLASH_UPDATE`.
 ///
 /// The RP2350 bootrom natively supports booting from a different flash
-/// region via the `flash_update_boot_window_base` parameter. No manual
-/// copy from staging to slot 0 is needed — the bootrom remaps the
-/// staging area to appear at the firmware's link address (0x10000000).
+/// region: `ota_target_slot()` returns the inactive slot offset, and
+/// the bootrom remaps it to XIP base address `0x10000000`.  No manual
+/// copy is needed.
 ///
 /// This function NEVER RETURNS.
-pub fn ota_copy_and_reboot() -> ! {
+pub fn ota_reboot_into_new_slot() -> ! {
     // REBOOT_TYPE_FLASH_UPDATE = 0x4, NO_RETURN_ON_SUCCESS = 0x100
-    // p0 = XIP address of the staging area
-    let staging_xip = 0x10000000u32 + platform::STAGING_OFFSET;
-    info!("ota: rebooting into staging at {:#x}", staging_xip);
-    embassy_rp::rom_data::reboot(0x104, 500, staging_xip, 0);
+    // p0 = XIP address of the target slot (where we just wrote the new firmware)
+    let target_xip = platform::XIP_BASE + platform::ota_target_slot();
+    info!("ota: rebooting into slot at {:#x}", target_xip);
+    embassy_rp::rom_data::reboot(0x104, 500, target_xip, 0);
     loop {
         cortex_m::asm::wfi();
     }

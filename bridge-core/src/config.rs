@@ -110,7 +110,7 @@ fn default_mstp_mac() -> u8 {
     1
 }
 fn default_mstp_baud() -> u32 {
-    19_200
+    9_600 // Test: try 9600 in case Flamco uses different default
 }
 fn default_max_master() -> u8 {
     127
@@ -672,6 +672,80 @@ impl BridgeConfig {
             return false;
         }
         true
+    }
+
+    /// Find the [`PointRule`] matching `object_type` and `object_instance` across
+    /// **all** devices, returning its mode and resolved processor list.
+    ///
+    /// When multiple rules match (different `device_id` values for the same object
+    /// address), the first match in insertion order is returned.
+    ///
+    /// Lookup algorithm:
+    /// 1. Scan `self.points` for the first rule where `object_type` and
+    ///    `object_instance` both match.
+    /// 2. If found and `convertor_id` is non-empty, locate the [`Convertor`] in
+    ///    `self.convertors` by ID and return its processor slice.
+    /// 3. If the convertor is missing or the ID is empty, return an empty slice.
+    /// 4. If no rule matches, return `(PointMode::Passthrough, &[])`.
+    pub fn find_point_rule(
+        &self,
+        object_type: u16,
+        object_instance: u32,
+    ) -> (&PointMode, &[Processor]) {
+        for rule in self.points.iter() {
+            if rule.object_type == object_type && rule.object_instance == object_instance {
+                return self.resolve_rule(rule);
+            }
+        }
+        (&PointMode::Passthrough, &[])
+    }
+
+    /// Find the [`PointRule`] matching a specific `device_id`, `object_type`, and
+    /// `object_instance`, returning its mode and resolved processor list.
+    ///
+    /// Unlike [`find_point_rule`], this variant also checks `rule.device_id`, so
+    /// two devices with identically numbered objects can have independent rules.
+    ///
+    /// Lookup algorithm:
+    /// 1. Scan `self.points` for the first rule where all three fields match.
+    /// 2. If found and `convertor_id` is non-empty, locate the [`Convertor`] in
+    ///    `self.convertors` by ID and return its processor slice.
+    /// 3. If the convertor is missing or the ID is empty, return an empty slice.
+    /// 4. If no rule matches, return `(PointMode::Passthrough, &[])`.
+    pub fn find_point_rule_for_device(
+        &self,
+        device_id: u32,
+        object_type: u16,
+        object_instance: u32,
+    ) -> (&PointMode, &[Processor]) {
+        for rule in self.points.iter() {
+            if rule.device_id == device_id
+                && rule.object_type == object_type
+                && rule.object_instance == object_instance
+            {
+                return self.resolve_rule(rule);
+            }
+        }
+        (&PointMode::Passthrough, &[])
+    }
+
+    /// Resolve a matched [`PointRule`] to its mode and processor slice.
+    ///
+    /// If `convertor_id` is non-empty, the matching [`Convertor`] is looked up
+    /// and its `processors` slice is returned.  An unknown ID (convertor deleted
+    /// after the rule was created) gracefully falls back to an empty slice so the
+    /// bridge continues operating in the configured mode without crashing.
+    fn resolve_rule<'a>(&'a self, rule: &'a PointRule) -> (&'a PointMode, &'a [Processor]) {
+        if rule.convertor_id.is_empty() {
+            return (&rule.mode, &[]);
+        }
+        for convertor in self.convertors.iter() {
+            if convertor.id == rule.convertor_id {
+                return (&rule.mode, convertor.processors.as_slice());
+            }
+        }
+        // Convertor ID set but not found — degrade gracefully.
+        (&rule.mode, &[])
     }
 }
 
@@ -1546,5 +1620,249 @@ mod tests {
         let (cfg, _): (BridgeConfig, _) =
             serde_json_core::from_slice(json).expect("bad version must deserialize without panic");
         assert!(!cfg.validate(), "bad version must fail validate()");
+    }
+
+    // -----------------------------------------------------------------------
+    // find_point_rule / find_point_rule_for_device
+    // -----------------------------------------------------------------------
+
+    fn make_convertor(id: &str, processors: Vec<Processor, 4>) -> Convertor {
+        let mut c_id: String<16> = String::new();
+        let _ = c_id.push_str(id);
+        let mut c_name: String<32> = String::new();
+        let _ = c_name.push_str(id);
+        Convertor {
+            id: c_id,
+            name: c_name,
+            processors,
+        }
+    }
+
+    fn make_rule(
+        device_id: u32,
+        object_type: u16,
+        object_instance: u32,
+        mode: PointMode,
+        convertor_id: &str,
+    ) -> PointRule {
+        let mut id: String<16> = String::new();
+        let _ = id.push_str(convertor_id);
+        PointRule {
+            device_id,
+            object_type,
+            object_instance,
+            mode,
+            convertor_id: id,
+        }
+    }
+
+    /// No rules → always returns Passthrough with empty processor list.
+    #[test]
+    fn find_point_rule_no_rules_returns_passthrough() {
+        let cfg = BridgeConfig::default();
+        let (mode, procs) = cfg.find_point_rule(0, 42);
+        assert_eq!(*mode, PointMode::Passthrough);
+        assert!(procs.is_empty());
+    }
+
+    /// Matching rule with no convertor_id → mode returned, processors empty.
+    #[test]
+    fn find_point_rule_match_no_convertor() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 42, PointMode::Ignore, ""))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule(0, 42);
+        assert_eq!(*mode, PointMode::Ignore);
+        assert!(procs.is_empty());
+    }
+
+    /// Matching rule with a convertor_id that exists → processors returned.
+    #[test]
+    fn find_point_rule_match_with_convertor() {
+        let mut cfg = BridgeConfig::default();
+
+        let mut processors: Vec<Processor, 4> = Vec::new();
+        processors.push(Processor::SetUnit(62)).unwrap();
+        cfg.convertors
+            .push(make_convertor("temp-c", processors))
+            .unwrap();
+        cfg.points
+            .push(make_rule(1000, 0, 7, PointMode::Processed, "temp-c"))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule(0, 7);
+        assert_eq!(*mode, PointMode::Processed);
+        assert_eq!(procs.len(), 1);
+        assert!(matches!(procs[0], Processor::SetUnit(62)));
+    }
+
+    /// Matching rule with convertor_id that does NOT exist → mode returned, processors empty.
+    #[test]
+    fn find_point_rule_missing_convertor_degrades_gracefully() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(
+                1000,
+                0,
+                3,
+                PointMode::Processed,
+                "deleted-convertor",
+            ))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule(0, 3);
+        assert_eq!(*mode, PointMode::Processed);
+        assert!(procs.is_empty());
+    }
+
+    /// Wrong object_type → no match → Passthrough.
+    #[test]
+    fn find_point_rule_wrong_object_type_no_match() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 5, PointMode::Ignore, ""))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule(1, 5); // type 1, not 0
+        assert_eq!(*mode, PointMode::Passthrough);
+        assert!(procs.is_empty());
+    }
+
+    /// Wrong object_instance → no match → Passthrough.
+    #[test]
+    fn find_point_rule_wrong_instance_no_match() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 5, PointMode::Ignore, ""))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule(0, 99);
+        assert_eq!(*mode, PointMode::Passthrough);
+        assert!(procs.is_empty());
+    }
+
+    /// First matching rule in insertion order is used (ignores later duplicates).
+    #[test]
+    fn find_point_rule_first_match_wins() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 1, PointMode::Ignore, ""))
+            .unwrap();
+        cfg.points
+            .push(make_rule(2000, 0, 1, PointMode::Passthrough, ""))
+            .unwrap();
+
+        let (mode, _) = cfg.find_point_rule(0, 1);
+        assert_eq!(*mode, PointMode::Ignore); // first match wins
+    }
+
+    // --- find_point_rule_for_device ---
+
+    /// No rules → always returns Passthrough with empty processor list.
+    #[test]
+    fn find_point_rule_for_device_no_rules_returns_passthrough() {
+        let cfg = BridgeConfig::default();
+        let (mode, procs) = cfg.find_point_rule_for_device(1000, 0, 42);
+        assert_eq!(*mode, PointMode::Passthrough);
+        assert!(procs.is_empty());
+    }
+
+    /// Two devices with same object address can have independent rules.
+    #[test]
+    fn find_point_rule_for_device_differentiates_by_device_id() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 1, PointMode::Ignore, ""))
+            .unwrap();
+        cfg.points
+            .push(make_rule(2000, 0, 1, PointMode::Passthrough, ""))
+            .unwrap();
+
+        let (mode_a, _) = cfg.find_point_rule_for_device(1000, 0, 1);
+        let (mode_b, _) = cfg.find_point_rule_for_device(2000, 0, 1);
+        assert_eq!(*mode_a, PointMode::Ignore);
+        assert_eq!(*mode_b, PointMode::Passthrough);
+    }
+
+    /// Matching rule with a convertor_id → processors returned correctly.
+    #[test]
+    fn find_point_rule_for_device_match_with_convertor() {
+        let mut cfg = BridgeConfig::default();
+
+        let mut processors: Vec<Processor, 4> = Vec::new();
+        processors
+            .push(Processor::Scale {
+                factor: 0.1,
+                offset: 0.0,
+            })
+            .unwrap();
+        cfg.convertors
+            .push(make_convertor("scale-01", processors))
+            .unwrap();
+        cfg.points
+            .push(make_rule(5000, 2, 10, PointMode::Processed, "scale-01"))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule_for_device(5000, 2, 10);
+        assert_eq!(*mode, PointMode::Processed);
+        assert_eq!(procs.len(), 1);
+        assert!(
+            matches!(procs[0], Processor::Scale { factor, offset } if factor == 0.1 && offset == 0.0)
+        );
+    }
+
+    /// Wrong device_id → no match → Passthrough.
+    #[test]
+    fn find_point_rule_for_device_wrong_device_id_no_match() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 5, PointMode::Ignore, ""))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule_for_device(9999, 0, 5);
+        assert_eq!(*mode, PointMode::Passthrough);
+        assert!(procs.is_empty());
+    }
+
+    /// Missing convertor in device-scoped lookup degrades gracefully.
+    #[test]
+    fn find_point_rule_for_device_missing_convertor_degrades_gracefully() {
+        let mut cfg = BridgeConfig::default();
+        cfg.points
+            .push(make_rule(1000, 0, 3, PointMode::Processed, "gone"))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule_for_device(1000, 0, 3);
+        assert_eq!(*mode, PointMode::Processed);
+        assert!(procs.is_empty());
+    }
+
+    /// Multiple processors in a convertor are all returned.
+    #[test]
+    fn find_point_rule_convertor_multiple_processors() {
+        let mut cfg = BridgeConfig::default();
+
+        let mut processors: Vec<Processor, 4> = Vec::new();
+        processors.push(Processor::SetUnit(62)).unwrap();
+        processors
+            .push(Processor::Scale {
+                factor: 1.8,
+                offset: 32.0,
+            })
+            .unwrap();
+        cfg.convertors
+            .push(make_convertor("c-to-f", processors))
+            .unwrap();
+        cfg.points
+            .push(make_rule(1000, 0, 99, PointMode::Processed, "c-to-f"))
+            .unwrap();
+
+        let (mode, procs) = cfg.find_point_rule(0, 99);
+        assert_eq!(*mode, PointMode::Processed);
+        assert_eq!(procs.len(), 2);
+        assert!(matches!(procs[0], Processor::SetUnit(62)));
+        assert!(matches!(procs[1], Processor::Scale { factor, .. } if factor == 1.8));
     }
 }

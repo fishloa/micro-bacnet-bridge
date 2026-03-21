@@ -38,11 +38,6 @@
 //! | GET | `/api/v1/tokens` | list API tokens (admin) |
 //! | POST | `/api/v1/tokens` | create API token (admin) |
 //! | DELETE | `/api/v1/tokens/{id}` | revoke API token (admin) |
-//! | POST | `/api/v1/tls/csr` | generate CSR |
-//! | POST | `/api/v1/tls/cert` | upload certificate PEM |
-//! | POST | `/api/v1/tls/key` | upload private key PEM |
-//! | POST | `/api/v1/tls/self-signed` | generate self-signed cert |
-//! | DELETE | `/api/v1/tls` | disable TLS, remove cert/key |
 //! | GET | `/api/v1/config` | bulk config export |
 //! | PUT | `/api/v1/config` | bulk config import |
 //! | POST | `/api/v1/system/factory-reset` | wipe config, reboot |
@@ -206,11 +201,6 @@ impl AppWithStateBuilder for HttpApp {
                 "/api/v1/tokens",
                 get_service(GetTokensHandler).post_service(PostTokensHandler),
             )
-            // ---- TLS management ----
-            .route("/api/v1/tls/csr", post_service(TlsCsrHandler))
-            .route("/api/v1/tls/cert", post_service(TlsCertHandler))
-            .route("/api/v1/tls/key", post_service(TlsKeyHandler))
-            .route("/api/v1/tls/self-signed", post_service(TlsSelfSignedHandler))
             // ---- Bulk config export/import ----
             .route(
                 "/api/v1/config",
@@ -451,7 +441,7 @@ impl RequestHandlerService<()> for OtaHandler {
                         .await;
                 }
                 Timer::after_millis(100).await;
-                crate::ota_copy_and_reboot();
+                crate::ota_reboot_into_new_slot();
             }
             Err(msg) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg)
@@ -810,15 +800,107 @@ impl RequestHandlerService<()> for AuthLoginHandler {
         &self,
         _state: &(),
         _path_params: (),
-        request: Request<'_, R>,
+        mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true,\"token\":\"stub-token\",\"role\":\"admin\"}",
-        )
-        .await
+        match request.body_connection.body().read_all().await {
+            Ok(body_bytes) => {
+                let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
+                let username = extract_json_str(body_str, "username").unwrap_or("");
+                let password = extract_json_str(body_str, "password").unwrap_or("");
+
+                // Extract what we need from config under lock, then drop the lock.
+                // Enum to track the outcome of the config lookup.
+                enum LoginCheck {
+                    ConfigMissing,
+                    Unprovisioned,
+                    Authenticated(bridge_core::config::UserRole),
+                    BadCredentials,
+                }
+
+                let check = {
+                    let guard = CONFIG.lock().await;
+                    match guard.as_ref() {
+                        None => LoginCheck::ConfigMissing,
+                        Some(cfg) => {
+                            if cfg.users.is_empty() {
+                                LoginCheck::Unprovisioned
+                            } else {
+                                let mut result = LoginCheck::BadCredentials;
+                                for user in cfg.users.iter() {
+                                    if user.username.as_str() == username {
+                                        if bridge_core::auth::verify_password(
+                                            password,
+                                            &user.password_salt,
+                                            &user.password_hash,
+                                        ) {
+                                            result = LoginCheck::Authenticated(user.role);
+                                        }
+                                        break;
+                                    }
+                                }
+                                result
+                            }
+                        }
+                    }
+                };
+
+                let matched_role = match check {
+                    LoginCheck::ConfigMissing => {
+                        return (StatusCode::SERVICE_UNAVAILABLE, "config not ready\r\n")
+                            .write_to(request.body_connection.finalize().await?, response_writer)
+                            .await;
+                    }
+                    LoginCheck::Unprovisioned => {
+                        return send_json(
+                            request.body_connection.finalize().await?,
+                            response_writer,
+                            b"{\"ok\":true,\"token\":\"setup-token\",\"role\":\"admin\"}",
+                        )
+                        .await;
+                    }
+                    LoginCheck::Authenticated(role) => Some(role),
+                    LoginCheck::BadCredentials => None,
+                };
+
+                match matched_role {
+                    Some(bridge_core::config::UserRole::Admin) => {
+                        send_json(
+                            request.body_connection.finalize().await?,
+                            response_writer,
+                            b"{\"ok\":true,\"token\":\"session-token\",\"role\":\"admin\"}",
+                        )
+                        .await
+                    }
+                    Some(bridge_core::config::UserRole::Operator) => {
+                        send_json(
+                            request.body_connection.finalize().await?,
+                            response_writer,
+                            b"{\"ok\":true,\"token\":\"session-token\",\"role\":\"operator\"}",
+                        )
+                        .await
+                    }
+                    Some(bridge_core::config::UserRole::Viewer) => {
+                        send_json(
+                            request.body_connection.finalize().await?,
+                            response_writer,
+                            b"{\"ok\":true,\"token\":\"session-token\",\"role\":\"viewer\"}",
+                        )
+                        .await
+                    }
+                    None => {
+                        (StatusCode::UNAUTHORIZED, "invalid credentials\r\n")
+                            .write_to(request.body_connection.finalize().await?, response_writer)
+                            .await
+                    }
+                }
+            }
+            Err(_) => {
+                (StatusCode::BAD_REQUEST, "failed to read body\r\n")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await
+            }
+        }
     }
 }
 
@@ -860,24 +942,41 @@ impl RequestHandlerService<()> for GetUsersHandler {
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
         let guard = CONFIG.lock().await;
-        let provisioned = guard.as_ref().map(|c| c.provisioned).unwrap_or(false);
-        drop(guard);
-
-        if !provisioned {
-            // Unprovisioned: no users yet.
-            return send_json(
-                request.body_connection.finalize().await?,
-                response_writer,
-                b"[]",
-            )
-            .await;
+        let mut body: heapless::Vec<u8, 512> = heapless::Vec::new();
+        let _ = body.extend_from_slice(b"[");
+        let mut first = true;
+        if let Some(cfg) = guard.as_ref() {
+            for user in cfg.users.iter() {
+                if !first {
+                    let _ = body.extend_from_slice(b",");
+                }
+                first = false;
+                let role_str = match user.role {
+                    bridge_core::config::UserRole::Admin => "admin",
+                    bridge_core::config::UserRole::Operator => "operator",
+                    bridge_core::config::UserRole::Viewer => "Viewer",
+                };
+                let mut escaped_name: heapless::String<64> = heapless::String::new();
+                json_escape_str_short(user.username.as_str(), &mut escaped_name);
+                let mut entry: heapless::String<128> = heapless::String::new();
+                let _ = core::fmt::write(
+                    &mut entry,
+                    format_args!(
+                        "{{\"username\":\"{}\",\"role\":\"{}\"}}",
+                        escaped_name.as_str(),
+                        role_str,
+                    ),
+                );
+                let _ = body.extend_from_slice(entry.as_bytes());
+            }
         }
+        drop(guard);
+        let _ = body.extend_from_slice(b"]");
 
-        // TODO: enumerate actual users from config when provisioning flow is implemented.
         send_json(
             request.body_connection.finalize().await?,
             response_writer,
-            b"[]",
+            body.as_slice(),
         )
         .await
     }
@@ -885,7 +984,8 @@ impl RequestHandlerService<()> for GetUsersHandler {
 
 /// POST /api/v1/users — create a user.
 ///
-/// Auth: requires Admin role.  Returns `{"ok":true,"id":1}` as stub.
+/// Auth: requires Admin role.
+/// Body: `{"username":"...","password":"...","role":"Admin|Operator|Viewer"}`.
 struct PostUsersHandler;
 
 impl RequestHandlerService<()> for PostUsersHandler {
@@ -893,15 +993,77 @@ impl RequestHandlerService<()> for PostUsersHandler {
         &self,
         _state: &(),
         _path_params: (),
-        request: Request<'_, R>,
+        mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true,\"id\":1}",
-        )
-        .await
+        match request.body_connection.body().read_all().await {
+            Ok(body_bytes) => {
+                let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
+                let username_str = extract_json_str(body_str, "username").unwrap_or("");
+                let password_str = extract_json_str(body_str, "password").unwrap_or("");
+                let role_str = extract_json_str(body_str, "role").unwrap_or("admin");
+
+                if username_str.is_empty() || password_str.is_empty() {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        "username and password required\r\n",
+                    )
+                        .write_to(request.body_connection.finalize().await?, response_writer)
+                        .await;
+                }
+
+                let role = match role_str {
+                    "admin" | "Admin" => bridge_core::config::UserRole::Admin,
+                    "operator" | "Operator" => bridge_core::config::UserRole::Operator,
+                    _ => bridge_core::config::UserRole::Viewer,
+                };
+
+                // Generate a random 32-byte salt using the hardware ROSC RNG.
+                let mut salt = [0u8; 32];
+                embassy_rp::clocks::RoscRng.fill_bytes(&mut salt);
+
+                let mut digest = [0u8; 32];
+                bridge_core::auth::hash_password(password_str, &salt, &mut digest);
+
+                let mut username_hs: heapless::String<16> = heapless::String::new();
+                // Truncate to 16 chars max (UserConfig capacity).
+                for ch in username_str.chars().take(16) {
+                    let _ = username_hs.push(ch);
+                }
+
+                let user = bridge_core::config::UserConfig {
+                    username: username_hs,
+                    password_salt: salt,
+                    password_hash: digest,
+                    role,
+                };
+
+                let mut guard = CONFIG.lock().await;
+                if let Some(cfg) = guard.as_mut() {
+                    if cfg.users.push(user).is_err() {
+                        drop(guard);
+                        return (StatusCode::UNPROCESSABLE_ENTITY, "user list full\r\n")
+                            .write_to(request.body_connection.finalize().await?, response_writer)
+                            .await;
+                    }
+                    cfg.provisioned = true;
+                }
+                drop(guard);
+                crate::config::request_save();
+
+                send_json(
+                    request.body_connection.finalize().await?,
+                    response_writer,
+                    b"{\"ok\":true}",
+                )
+                .await
+            }
+            Err(_) => {
+                (StatusCode::BAD_REQUEST, "failed to read body\r\n")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await
+            }
+        }
     }
 }
 
@@ -920,11 +1082,45 @@ impl RequestHandlerService<()> for GetTokensHandler {
         request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        // TODO: read from config.tokens when user provisioning is implemented.
+        let guard = CONFIG.lock().await;
+        let mut body: heapless::Vec<u8, 512> = heapless::Vec::new();
+        let _ = body.extend_from_slice(b"[");
+        let mut first = true;
+        if let Some(cfg) = guard.as_ref() {
+            for token in cfg.tokens.iter() {
+                if !first {
+                    let _ = body.extend_from_slice(b",");
+                }
+                first = false;
+                let role_str = match token.role {
+                    bridge_core::config::UserRole::Admin => "admin",
+                    bridge_core::config::UserRole::Operator => "operator",
+                    bridge_core::config::UserRole::Viewer => "Viewer",
+                };
+                let mut escaped_name: heapless::String<64> = heapless::String::new();
+                json_escape_str_short(token.name.as_str(), &mut escaped_name);
+                let mut escaped_created_by: heapless::String<64> = heapless::String::new();
+                json_escape_str_short(token.created_by.as_str(), &mut escaped_created_by);
+                let mut entry: heapless::String<192> = heapless::String::new();
+                let _ = core::fmt::write(
+                    &mut entry,
+                    format_args!(
+                        "{{\"name\":\"{}\",\"role\":\"{}\",\"createdBy\":\"{}\"}}",
+                        escaped_name.as_str(),
+                        role_str,
+                        escaped_created_by.as_str(),
+                    ),
+                );
+                let _ = body.extend_from_slice(entry.as_bytes());
+            }
+        }
+        drop(guard);
+        let _ = body.extend_from_slice(b"]");
+
         send_json(
             request.body_connection.finalize().await?,
             response_writer,
-            b"[]",
+            body.as_slice(),
         )
         .await
     }
@@ -932,9 +1128,10 @@ impl RequestHandlerService<()> for GetTokensHandler {
 
 /// POST /api/v1/tokens — create an API token.
 ///
-/// Returns `{"ok":true,"id":"<id>","token":"<plaintext>"}`.
+/// Returns `{"ok":true,"name":"<name>","token":"<plaintext>"}`.
 /// The plaintext token is only returned once; subsequent requests cannot
 /// recover it (only the SHA-256 hash is stored).
+/// Body: `{"name":"...","role":"Admin|Operator|Viewer","createdBy":"..."}`.
 struct PostTokensHandler;
 
 impl RequestHandlerService<()> for PostTokensHandler {
@@ -942,116 +1139,88 @@ impl RequestHandlerService<()> for PostTokensHandler {
         &self,
         _state: &(),
         _path_params: (),
-        request: Request<'_, R>,
+        mut request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        // TODO: generate a cryptographically random token, store hash in config.
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true,\"id\":\"stub-id\",\"token\":\"stub-plaintext-token\"}",
-        )
-        .await
-    }
-}
+        match request.body_connection.body().read_all().await {
+            Ok(body_bytes) => {
+                let body_str = core::str::from_utf8(body_bytes).unwrap_or("");
+                let name_str = extract_json_str(body_str, "name").unwrap_or("api-token");
+                let role_str = extract_json_str(body_str, "role").unwrap_or("admin");
+                let created_by_str = extract_json_str(body_str, "createdBy").unwrap_or("admin");
 
-// ---------------------------------------------------------------------------
-// TLS management handlers
-// ---------------------------------------------------------------------------
+                let role = match role_str {
+                    "admin" | "Admin" => bridge_core::config::UserRole::Admin,
+                    "operator" | "Operator" => bridge_core::config::UserRole::Operator,
+                    _ => bridge_core::config::UserRole::Viewer,
+                };
 
-/// POST /api/v1/tls/csr — generate a Certificate Signing Request.
-///
-/// Returns a PEM-encoded CSR stub.  Real implementation will generate an
-/// EC P-256 key pair, store the private key, and return the CSR for the
-/// operator to submit to their CA.
-struct TlsCsrHandler;
+                // Generate 32 random bytes → encode as 64 hex chars (the plaintext token).
+                let mut raw = [0u8; 32];
+                embassy_rp::clocks::RoscRng.fill_bytes(&mut raw);
 
-impl RequestHandlerService<()> for TlsCsrHandler {
-    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
-        &self,
-        _state: &(),
-        _path_params: (),
-        request: Request<'_, R>,
-        response_writer: W,
-    ) -> Result<ResponseSent, W::Error> {
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true,\"csr\":\"-----BEGIN CERTIFICATE REQUEST-----\\n(stub CSR)\\n-----END CERTIFICATE REQUEST-----\\n\"}",
-        )
-        .await
-    }
-}
+                // Build hex-encoded plaintext token (64 chars).
+                let mut plaintext: heapless::String<64> = heapless::String::new();
+                for byte in raw.iter() {
+                    let hi = byte >> 4;
+                    let lo = byte & 0x0F;
+                    let _ = plaintext.push(hex_nibble_char(hi));
+                    let _ = plaintext.push(hex_nibble_char(lo));
+                }
 
-/// POST /api/v1/tls/cert — upload a certificate PEM.
-///
-/// Request body must be `{"cert":"<PEM>"}`.  Stores the DER-encoded certificate
-/// in the TLS config flash sector.
-struct TlsCertHandler;
+                let token_hash = bridge_core::auth::hash_token(plaintext.as_bytes());
 
-impl RequestHandlerService<()> for TlsCertHandler {
-    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
-        &self,
-        _state: &(),
-        _path_params: (),
-        request: Request<'_, R>,
-        response_writer: W,
-    ) -> Result<ResponseSent, W::Error> {
-        // TODO: parse body, validate PEM cert, store DER in flash.
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true}",
-        )
-        .await
-    }
-}
+                let mut name_hs: heapless::String<32> = heapless::String::new();
+                for ch in name_str.chars().take(32) {
+                    let _ = name_hs.push(ch);
+                }
+                let mut created_by_hs: heapless::String<16> = heapless::String::new();
+                for ch in created_by_str.chars().take(16) {
+                    let _ = created_by_hs.push(ch);
+                }
 
-/// POST /api/v1/tls/key — upload a private key PEM.
-///
-/// Request body must be `{"key":"<PEM>"}`.  Stores the DER-encoded key in
-/// the TLS config flash sector.
-struct TlsKeyHandler;
+                let token_cfg = bridge_core::config::TokenConfig {
+                    name: name_hs,
+                    token_hash,
+                    role,
+                    created_by: created_by_hs,
+                };
 
-impl RequestHandlerService<()> for TlsKeyHandler {
-    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
-        &self,
-        _state: &(),
-        _path_params: (),
-        request: Request<'_, R>,
-        response_writer: W,
-    ) -> Result<ResponseSent, W::Error> {
-        // TODO: parse body, validate PEM key, store DER in flash.
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true}",
-        )
-        .await
-    }
-}
+                let mut guard = CONFIG.lock().await;
+                if let Some(cfg) = guard.as_mut() {
+                    if cfg.tokens.push(token_cfg).is_err() {
+                        drop(guard);
+                        return (StatusCode::UNPROCESSABLE_ENTITY, "token list full\r\n")
+                            .write_to(request.body_connection.finalize().await?, response_writer)
+                            .await;
+                    }
+                }
+                drop(guard);
+                crate::config::request_save();
 
-/// POST /api/v1/tls/self-signed — generate a self-signed certificate.
-///
-/// Generates an EC P-256 key pair and a self-signed certificate with the
-/// device's current hostname as CN.  Stores both in flash and enables TLS.
-struct TlsSelfSignedHandler;
+                let mut resp: heapless::String<128> = heapless::String::new();
+                let _ = core::fmt::write(
+                    &mut resp,
+                    format_args!(
+                        "{{\"ok\":true,\"name\":\"{}\",\"token\":\"{}\"}}",
+                        name_str,
+                        plaintext.as_str(),
+                    ),
+                );
 
-impl RequestHandlerService<()> for TlsSelfSignedHandler {
-    async fn call_request_handler_service<R: Read, W: ResponseWriter<Error = R::Error>>(
-        &self,
-        _state: &(),
-        _path_params: (),
-        request: Request<'_, R>,
-        response_writer: W,
-    ) -> Result<ResponseSent, W::Error> {
-        // TODO: generate key pair and self-signed cert, store in flash, set tls.server_enabled.
-        send_json(
-            request.body_connection.finalize().await?,
-            response_writer,
-            b"{\"ok\":true}",
-        )
-        .await
+                send_json(
+                    request.body_connection.finalize().await?,
+                    response_writer,
+                    resp.as_bytes(),
+                )
+                .await
+            }
+            Err(_) => {
+                (StatusCode::BAD_REQUEST, "failed to read body\r\n")
+                    .write_to(request.body_connection.finalize().await?, response_writer)
+                    .await
+            }
+        }
     }
 }
 
@@ -1061,8 +1230,9 @@ impl RequestHandlerService<()> for TlsSelfSignedHandler {
 
 /// GET /api/v1/config — export full config as JSON.
 ///
-/// Requires Admin role.  Returns the entire `BridgeConfig` struct serialised to
-/// JSON (excluding the `magic` and `version` housekeeping fields).
+/// Requires Admin role.  Returns the entire `BridgeConfig` struct serialised to JSON.
+/// Uses a 2 KB on-stack buffer. Only one instance of this handler runs at a time
+/// (picoserve serialises access per connection), so the stack cost is bounded.
 struct GetBulkConfigHandler;
 
 impl RequestHandlerService<()> for GetBulkConfigHandler {
@@ -1073,11 +1243,33 @@ impl RequestHandlerService<()> for GetBulkConfigHandler {
         request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        // TODO: serialise CONFIG using serde_json_core into a heapless buffer.
+        // 2 KB buffer is sufficient for a fully-populated BridgeConfig.
+        let mut json_buf = [0u8; 2048];
+        let json_len = {
+            let guard = CONFIG.lock().await;
+            match guard.as_ref() {
+                Some(cfg) => match serde_json_core::to_slice(cfg, &mut json_buf) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        drop(guard);
+                        return (StatusCode::INTERNAL_SERVER_ERROR, "config too large\r\n")
+                            .write_to(request.body_connection.finalize().await?, response_writer)
+                            .await;
+                    }
+                },
+                None => {
+                    drop(guard);
+                    return (StatusCode::NOT_FOUND, "config not ready\r\n")
+                        .write_to(request.body_connection.finalize().await?, response_writer)
+                        .await;
+                }
+            }
+        };
+
         send_json(
             request.body_connection.finalize().await?,
             response_writer,
-            b"{\"ok\":true,\"config\":{}}",
+            &json_buf[..json_len],
         )
         .await
     }
@@ -1113,8 +1305,9 @@ impl RequestHandlerService<()> for PutBulkConfigHandler {
 
 /// POST /api/v1/system/factory-reset — wipe the config flash sector and reboot.
 ///
-/// Requires Admin role.  Erases the config sector (restoring defaults), then
-/// reboots.  The device will come up unprovisioned.
+/// Requires Admin role.  Replaces the in-memory config with defaults, signals a
+/// flash save, waits 1 second for the save to complete, then reboots.
+/// The device will come up unprovisioned.
 struct FactoryResetHandler;
 
 impl RequestHandlerService<()> for FactoryResetHandler {
@@ -1125,11 +1318,18 @@ impl RequestHandlerService<()> for FactoryResetHandler {
         request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
-        // TODO: erase config flash sector before rebooting.
+        {
+            let mut guard = CONFIG.lock().await;
+            if let Some(cfg) = guard.as_mut() {
+                *cfg = BridgeConfig::default();
+            }
+        }
+        crate::config::request_save();
         let _sent = "{\"ok\":true}"
             .write_to(request.body_connection.finalize().await?, response_writer)
             .await?;
-        Timer::after_millis(500).await;
+        // Wait for the config save task to flush to flash before rebooting.
+        Timer::after_millis(1500).await;
         crate::system_reset();
     }
 }
@@ -1242,16 +1442,6 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
 
         // DELETE /api/v1/tokens/{id} — admin only stub
         if method == "DELETE" && path_str.starts_with("/api/v1/tokens/") {
-            return send_json(
-                request.body_connection.finalize().await?,
-                response_writer,
-                b"{\"ok\":true}",
-            )
-            .await;
-        }
-
-        // DELETE /api/v1/tls — disable TLS stub
-        if method == "DELETE" && path_str == "/api/v1/tls" {
             return send_json(
                 request.body_connection.finalize().await?,
                 response_writer,
@@ -1388,6 +1578,78 @@ async fn send_gzip_asset<R: Read, W: ResponseWriter<Error = R::Error>>(
         .with_header("Cache-Control", cache)
         .write_to(connection, response_writer)
         .await
+}
+
+// ---------------------------------------------------------------------------
+// JSON field extraction (no serde derive required)
+// ---------------------------------------------------------------------------
+
+/// Extract a JSON string value by key from a JSON object literal.
+///
+/// Finds the first occurrence of `"key":"` and returns the slice up to the
+/// next unescaped `"`.  Returns `None` if the key is not present.
+///
+/// This is intentionally minimal: it does not handle escaped quotes inside the
+/// value string.  Passwords and usernames submitted by the admin UI will not
+/// contain embedded `"` characters.
+fn extract_json_str<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    // Build the search pattern: `"key":"`
+    // We need a small stack buffer for the pattern string.
+    let mut pattern: heapless::String<64> = heapless::String::new();
+    let _ = pattern.push('"');
+    let _ = pattern.push_str(key);
+    let _ = pattern.push_str("\":\"");
+    let start_pos = json.find(pattern.as_str())? + pattern.len();
+    let rest = &json[start_pos..];
+    let end_pos = rest.find('"')?;
+    Some(&rest[..end_pos])
+}
+
+// ---------------------------------------------------------------------------
+// Short-string JSON escaping (for heapless::String<64>)
+// ---------------------------------------------------------------------------
+
+/// Write `s` into `out` (heapless::String<64>) with JSON string escaping.
+///
+/// Used for username and token name fields which are bounded at 32 chars.
+fn json_escape_str_short(s: &str, out: &mut heapless::String<64>) {
+    for ch in s.chars() {
+        match ch {
+            '"' => {
+                let _ = out.push_str("\\\"");
+            }
+            '\\' => {
+                let _ = out.push_str("\\\\");
+            }
+            '\n' => {
+                let _ = out.push_str("\\n");
+            }
+            '\r' => {
+                let _ = out.push_str("\\r");
+            }
+            '\t' => {
+                let _ = out.push_str("\\t");
+            }
+            c if (c as u32) < 0x20 => {
+                // Control chars: skip (rare in names)
+            }
+            c => {
+                let _ = out.push(c);
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hex encoding helper
+// ---------------------------------------------------------------------------
+
+/// Convert a nibble (0–15) to its lowercase hex character.
+fn hex_nibble_char(n: u8) -> char {
+    match n {
+        0..=9 => (b'0' + n) as char,
+        _ => (b'a' + n - 10) as char,
+    }
 }
 
 // ---------------------------------------------------------------------------
