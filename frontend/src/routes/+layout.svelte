@@ -25,7 +25,9 @@
 
 <div class="app-shell">
 	<nav class="app-nav">
-		<div class="app-brand">B</div>
+		<a href="/" class="app-brand" title="BACnet Bridge">
+			<img src="https://icomb.place/design-system/czernin.svg" alt="Icomb Place" width="28" height="28" />
+		</a>
 		{#each navItems as item}
 			<a
 				href={item.href}
