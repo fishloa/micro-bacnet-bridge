@@ -283,6 +283,44 @@ impl BridgeStateInner {
         }
     }
 
+    /// Update only the engineering-units field for an existing point.
+    ///
+    /// If the point does not yet exist (value not yet received) the call is a
+    /// no-op — the unit will be written when the point is eventually created by
+    /// [`update_point`]. Does **not** set the `dirty` flag because the unit
+    /// code is static metadata, not a live value change.
+    pub fn update_point_unit(&mut self, device_idx: usize, object_id: ObjectId, unit: u16) {
+        if device_idx >= MAX_DEVICES {
+            return;
+        }
+        let count = self.point_counts[device_idx];
+        for i in 0..count {
+            if let Some(ref mut p) = self.points[device_idx][i] {
+                if p.object_id == object_id {
+                    p.unit = unit;
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Return the current engineering-unit code for a point, or `0` if the
+    /// point does not exist or no unit has been received yet.
+    pub fn get_point_unit(&self, device_idx: usize, object_id: ObjectId) -> u16 {
+        if device_idx >= MAX_DEVICES {
+            return 0;
+        }
+        let count = self.point_counts[device_idx];
+        for i in 0..count {
+            if let Some(ref p) = self.points[device_idx][i] {
+                if p.object_id == object_id {
+                    return p.unit;
+                }
+            }
+        }
+        0
+    }
+
     /// Return the point slice for a device (may contain `None` holes).
     pub fn get_device_points(&self, device_idx: usize) -> &[Option<PointEntry>] {
         if device_idx >= MAX_DEVICES {

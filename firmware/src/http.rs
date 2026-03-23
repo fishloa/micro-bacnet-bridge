@@ -52,7 +52,7 @@ use defmt::info;
 use embassy_net::Stack;
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_time::Timer;
+use embassy_time::{Instant, Timer};
 use picoserve::{
     io::Read,
     request::Request,
@@ -87,6 +87,105 @@ pub static CURRENT_IP: AtomicU32 = AtomicU32::new(0);
 /// MAC address in TXT records without holding a mutex.
 pub static MAC_ADDR_HI: AtomicU32 = AtomicU32::new(0);
 pub static MAC_ADDR_LO: AtomicU32 = AtomicU32::new(0);
+
+// ---------------------------------------------------------------------------
+// Session store
+// ---------------------------------------------------------------------------
+
+/// Session expiry: 24 hours in milliseconds.
+const SESSION_EXPIRY_MS: u64 = 86_400_000;
+
+/// Maximum number of concurrent browser sessions.
+const MAX_SESSIONS: usize = 4;
+
+/// One entry in the session store.
+///
+/// `token_hash` is `SHA-256(plaintext_hex_token)`.
+/// `created_at` is `Instant::now().as_millis()` at login time.
+/// An all-zeros `token_hash` means the slot is empty.
+#[derive(Clone, Copy)]
+struct Session {
+    token_hash: [u8; 32],
+    role: bridge_core::config::UserRole,
+    created_at: u64,
+}
+
+impl Session {
+    const EMPTY: Session = Session {
+        token_hash: [0u8; 32],
+        role: bridge_core::config::UserRole::Viewer,
+        created_at: 0,
+    };
+}
+
+/// Static session store protected by a critical-section mutex.
+///
+/// At most [`MAX_SESSIONS`] concurrent sessions.  The slot with the smallest
+/// `created_at` is evicted when the array is full.
+static SESSION_STORE: Mutex<CriticalSectionRawMutex, [Session; MAX_SESSIONS]> =
+    Mutex::new([Session::EMPTY; MAX_SESSIONS]);
+
+/// Insert a new session, evicting the oldest slot if the store is full.
+///
+/// Returns immediately (no async); the caller holds the mutex for the
+/// duration of the operation.
+async fn session_insert(hash: [u8; 32], role: bridge_core::config::UserRole) {
+    let now = Instant::now().as_millis();
+    let mut store = SESSION_STORE.lock().await;
+    // Try an empty slot first.
+    for slot in store.iter_mut() {
+        if slot.token_hash == [0u8; 32] {
+            *slot = Session {
+                token_hash: hash,
+                role,
+                created_at: now,
+            };
+            return;
+        }
+    }
+    // All slots occupied — evict the oldest.
+    let oldest = store
+        .iter_mut()
+        .min_by_key(|s| s.created_at)
+        .expect("MAX_SESSIONS > 0");
+    *oldest = Session {
+        token_hash: hash,
+        role,
+        created_at: now,
+    };
+}
+
+/// Remove the session whose `token_hash` matches `hash`.
+async fn session_remove(hash: &[u8; 32]) {
+    let mut store = SESSION_STORE.lock().await;
+    for slot in store.iter_mut() {
+        if &slot.token_hash == hash {
+            *slot = Session::EMPTY;
+            return;
+        }
+    }
+}
+
+/// Look up a session by `token_hash`.
+///
+/// Returns the [`UserRole`] if a matching, non-expired session exists.
+async fn session_find(hash: &[u8; 32]) -> Option<bridge_core::config::UserRole> {
+    let now = Instant::now().as_millis();
+    let store = SESSION_STORE.lock().await;
+    for slot in store.iter() {
+        if slot.token_hash == [0u8; 32] {
+            continue;
+        }
+        if &slot.token_hash == hash {
+            if now.saturating_sub(slot.created_at) < SESSION_EXPIRY_MS {
+                return Some(slot.role);
+            }
+            // Expired — treat as not found (will be evicted on next login).
+            return None;
+        }
+    }
+    None
+}
 
 // ---------------------------------------------------------------------------
 // Concurrency / buffer constants
@@ -908,11 +1007,28 @@ impl RequestHandlerService<()> for AuthLoginHandler {
 
                 match matched_role {
                     Some(r) => {
-                        let mut resp: heapless::String<96> = heapless::String::new();
+                        // Generate a random 32-byte token, hex-encode it (64 chars),
+                        // hash it, then store the hash in the session store.
+                        let mut raw = [0u8; 32];
+                        embassy_rp::clocks::RoscRng.fill_bytes(&mut raw);
+
+                        let mut plaintext: heapless::String<64> = heapless::String::new();
+                        for byte in raw.iter() {
+                            let hi = byte >> 4;
+                            let lo = byte & 0x0F;
+                            let _ = plaintext.push(hex_nibble_char(hi));
+                            let _ = plaintext.push(hex_nibble_char(lo));
+                        }
+
+                        let token_hash = bridge_core::auth::hash_token(plaintext.as_bytes());
+                        session_insert(token_hash, r).await;
+
+                        let mut resp: heapless::String<128> = heapless::String::new();
                         let _ = core::fmt::write(
                             &mut resp,
                             format_args!(
-                                "{{\"ok\":true,\"token\":\"session-token\",\"role\":\"{}\"}}",
+                                "{{\"ok\":true,\"token\":\"{}\",\"role\":\"{}\"}}",
+                                plaintext.as_str(),
                                 role_str(r),
                             ),
                         );
@@ -950,6 +1066,15 @@ impl RequestHandlerService<()> for AuthLogoutHandler {
         request: Request<'_, R>,
         response_writer: W,
     ) -> Result<ResponseSent, W::Error> {
+        // Remove the session corresponding to the bearer token (if any).
+        if let Some(v) = request.parts.headers().get("Authorization") {
+            if let Ok(v_str) = v.as_str() {
+                if let Some(token) = v_str.strip_prefix("Bearer ") {
+                    let hash = bridge_core::auth::hash_token(token.as_bytes());
+                    session_remove(&hash).await;
+                }
+            }
+        }
         send_json(
             request.body_connection.finalize().await?,
             response_writer,
@@ -1748,7 +1873,7 @@ async fn send_gzip_asset<R: Read, W: ResponseWriter<Error = R::Error>>(
 /// - The device is unprovisioned (`!cfg.provisioned`) — setup mode allows all
 ///   requests through so the operator can complete first-boot setup.
 /// - A valid `Authorization: Bearer <token>` header is present and the token
-///   hash matches one of the stored API tokens.
+///   hash matches one of the stored API tokens OR a live session token.
 ///
 /// Returns `false` if the device is provisioned but no valid token was supplied.
 async fn bearer_token_ok(headers: picoserve::request::Headers<'_>) -> bool {
@@ -1776,10 +1901,18 @@ async fn bearer_token_ok(headers: picoserve::request::Headers<'_>) -> bool {
                 return true;
             }
             // Provisioned: require a valid bearer token.
-            match maybe_hash {
-                None => false,
-                Some(hash) => cfg.tokens.iter().any(|t| t.token_hash == hash),
+            let hash = match maybe_hash {
+                None => return false,
+                Some(h) => h,
+            };
+            // Check API tokens stored in config.
+            if cfg.tokens.iter().any(|t| t.token_hash == hash) {
+                return true;
             }
+            // Drop config lock before acquiring session lock (lock ordering).
+            drop(guard);
+            // Check live session store.
+            session_find(&hash).await.is_some()
         }
     }
 }

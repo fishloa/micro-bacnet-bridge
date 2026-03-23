@@ -193,46 +193,70 @@ async fn handle_i_am(iam: &IAmData, source_pdu: &BacnetPdu) {
     state.upsert_device(device_id, mac, "");
 }
 
-/// Handle a ReadProperty-ACK — update point value in bridge state.
+/// Handle a ReadProperty-ACK — update point value or engineering units in
+/// bridge state.
 ///
-/// Values pass through the configured processor pipeline (scale, offset,
-/// state-text mapping, ignore/passthrough/processed modes) before being
-/// stored in the bridge state.
+/// - **PresentValue**: the value passes through the configured processor
+///   pipeline (scale, offset, state-text mapping, ignore/passthrough/processed
+///   modes) before being stored in the bridge state.
+/// - **Units**: the engineering-unit code is extracted from the enumerated
+///   value and stored directly via [`BridgeStateInner::update_point_unit`].
+///   After the first Units ACK for a device its `points_loaded` flag is set
+///   to `true` so subsequent poll cycles skip the extra Units request.
 async fn handle_read_property_ack(ack: &apdu::ReadPropertyAck, source_pdu: &BacnetPdu) {
-    // Only update PresentValue for now
-    if ack.property_id != PropertyId::PresentValue {
-        return;
-    }
-
-    let unit = 0u16; // TODO: track engineering units from a prior ReadProperty
-
-    // Find the responding device by its source MAC address.
-    // Lock config first (read-only), then bridge state (write).
     let source_mac = source_pdu.source_mac[0];
-    let cfg_guard = crate::http::CONFIG.lock().await;
-    let mut state = BRIDGE_STATE.lock().await;
-    for dev_idx in 0..state.device_count {
-        if state.devices[dev_idx].mac == source_mac {
-            let device_id = state.devices[dev_idx].device_id;
-            let (mode, processors) = if let Some(cfg) = cfg_guard.as_ref() {
-                cfg.find_point_rule_for_device(
-                    device_id,
-                    ack.object_id.object_type.code(),
-                    ack.object_id.instance,
-                )
-            } else {
-                (&PointMode::Passthrough, &[][..])
-            };
-            state.update_point_with_pipeline(
-                dev_idx,
-                ack.object_id,
-                ack.value.clone(),
-                unit,
-                mode,
-                processors,
-            );
-            break;
+
+    match ack.property_id {
+        PropertyId::PresentValue => {
+            // Lock config first (read-only), then bridge state (write).
+            let cfg_guard = crate::http::CONFIG.lock().await;
+            let mut state = BRIDGE_STATE.lock().await;
+            for dev_idx in 0..state.device_count {
+                if state.devices[dev_idx].mac == source_mac {
+                    let device_id = state.devices[dev_idx].device_id;
+                    // Preserve the engineering-unit code that was populated by
+                    // a prior Units ACK; don't reset it to 0 on every value
+                    // update.
+                    let unit = state.get_point_unit(dev_idx, ack.object_id);
+                    let (mode, processors) = if let Some(cfg) = cfg_guard.as_ref() {
+                        cfg.find_point_rule_for_device(
+                            device_id,
+                            ack.object_id.object_type.code(),
+                            ack.object_id.instance,
+                        )
+                    } else {
+                        (&PointMode::Passthrough, &[][..])
+                    };
+                    state.update_point_with_pipeline(
+                        dev_idx,
+                        ack.object_id,
+                        ack.value.clone(),
+                        unit,
+                        mode,
+                        processors,
+                    );
+                    break;
+                }
+            }
         }
+        PropertyId::Units => {
+            // Extract the numeric unit code from the enumerated value.
+            let unit_code = match &ack.value {
+                BacnetValue::Enumerated(code) => *code as u16,
+                _ => 0,
+            };
+
+            let mut state = BRIDGE_STATE.lock().await;
+            for dev_idx in 0..state.device_count {
+                if state.devices[dev_idx].mac == source_mac {
+                    state.update_point_unit(dev_idx, ack.object_id, unit_code);
+                    // Mark units as loaded so subsequent polls skip Units requests.
+                    state.devices[dev_idx].points_loaded = true;
+                    break;
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -399,7 +423,41 @@ async fn send_who_is_broadcast() {
     }
 }
 
+/// Send a ReadProperty request to a device's MS/TP MAC address.
+///
+/// Returns `false` if the outbound ring is full (caller should stop polling).
+fn send_read_property(dest_mac: u8, object_id: ObjectId, property_id: PropertyId) -> bool {
+    let req = ReadPropertyRequest {
+        object_id,
+        property_id,
+        array_index: None,
+    };
+    let invoke_id = next_invoke_id();
+    let mut buf = [0u8; 32];
+    if let Ok(n) = encode_read_property(&req, invoke_id, &mut buf) {
+        let mut pdu = BacnetPdu::new();
+        pdu.dest_mac[0] = dest_mac;
+        pdu.dest_mac_len = 1;
+        pdu.data[..n].copy_from_slice(&buf[..n]);
+        pdu.data_len = n as u16;
+        pdu.pdu_type = buf[0];
+
+        let ring = ipc::ip_to_mstp();
+        if !ring.push(&pdu) {
+            warn!("bacnet_router: outbound ring full");
+            return false;
+        }
+    }
+    true
+}
+
 /// Poll discovered devices for their point values.
+///
+/// Every poll cycle, ReadProperty(PresentValue) is sent for every known point.
+/// When `points_loaded` is false for a device, ReadProperty(Units) is also sent
+/// for each point so that the engineering-unit metadata is populated. Once the
+/// bridge state has received at least one Units ACK for a device its
+/// `points_loaded` flag is set to `true` and units are no longer re-requested.
 async fn poll_device_points() {
     let state = BRIDGE_STATE.lock().await;
     let count = state.device_count;
@@ -407,36 +465,29 @@ async fn poll_device_points() {
         return;
     }
 
-    // For each online device, send ReadProperty for PresentValue of known points
     for dev_idx in 0..count {
         let device = &state.devices[dev_idx];
         if !device.online {
             continue;
         }
 
+        let dest_mac = device.mac;
+        let need_units = !device.points_loaded;
         let points = state.get_device_points(dev_idx);
+
+        // Collect object IDs while the state lock is held to keep the borrow
+        // short; we need to release the lock before any await in send_reply.
+        // (send_read_property is sync so the lock stays held for the loop, which
+        // is fine — no await inside.)
         for point in points.iter().flatten() {
-            let req = ReadPropertyRequest {
-                object_id: point.object_id,
-                property_id: PropertyId::PresentValue,
-                array_index: None,
-            };
+            let oid = point.object_id;
 
-            let invoke_id = next_invoke_id();
-            let mut buf = [0u8; 32];
-            if let Ok(n) = encode_read_property(&req, invoke_id, &mut buf) {
-                let mut pdu = BacnetPdu::new();
-                pdu.dest_mac[0] = device.mac;
-                pdu.dest_mac_len = 1;
-                pdu.data[..n].copy_from_slice(&buf[..n]);
-                pdu.data_len = n as u16;
-                pdu.pdu_type = buf[0];
+            if !send_read_property(dest_mac, oid, PropertyId::PresentValue) {
+                return;
+            }
 
-                let ring = ipc::ip_to_mstp();
-                if !ring.push(&pdu) {
-                    warn!("bacnet_router: outbound ring full");
-                    return; // Stop polling if ring is full
-                }
+            if need_units && !send_read_property(dest_mac, oid, PropertyId::Units) {
+                return;
             }
         }
     }
