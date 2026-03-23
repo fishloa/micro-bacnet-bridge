@@ -1693,6 +1693,26 @@ impl picoserve::routing::PathRouterService<()> for CatchAllService {
             .await;
         }
 
+        // POST /api/v1/devices/{id}/refresh — clear points_loaded to re-read units
+        if method == "POST" {
+            if let Some(rest) = path_str.strip_prefix("/api/v1/devices/") {
+                if let Some(id_str) = rest.strip_suffix("/refresh") {
+                    if let Ok(device_id) = id_str.parse::<u32>() {
+                        let mut state = crate::bridge::BRIDGE_STATE.lock().await;
+                        if let Some(idx) = state.find_device(device_id) {
+                            state.devices[idx].points_loaded = false;
+                        }
+                        return send_json(
+                            request.body_connection.finalize().await?,
+                            response_writer,
+                            b"{\"ok\":true}",
+                        )
+                        .await;
+                    }
+                }
+            }
+        }
+
         // DELETE /api/v1/users/{username} — remove user from config
         if method == "DELETE" {
             if let Some(username) = path_str.strip_prefix("/api/v1/users/") {

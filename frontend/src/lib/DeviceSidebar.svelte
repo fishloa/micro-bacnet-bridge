@@ -1,5 +1,7 @@
 <script lang="ts">
 	import type { BacnetDevice } from './api';
+	import { api } from './api';
+	import RefreshCw from 'lucide-svelte/icons/refresh-cw';
 
 	let {
 		devices,
@@ -14,6 +16,18 @@
 		showAllDevices?: boolean;
 		onSelect: (id: number | null) => void;
 	} = $props();
+
+	let refreshing: number | null = $state(null);
+
+	async function refreshDevice(e: Event, deviceId: number) {
+		e.stopPropagation();
+		refreshing = deviceId;
+		try {
+			await api.refreshDevice(deviceId);
+		} finally {
+			setTimeout(() => { refreshing = null; }, 1000);
+		}
+	}
 </script>
 
 <aside class="device-sidebar">
@@ -29,10 +43,12 @@
 	{/if}
 
 	{#each devices as dev (dev.id)}
-		<button
+		<div
 			class="device-item"
 			class:active={selectedDeviceId === dev.id && !showAllDevices}
 			onclick={() => onSelect(dev.id)}
+			role="button"
+			tabindex="0"
 		>
 			<span class="device-status-dot" class:online={dev.online}></span>
 			<span class="device-info">
@@ -42,9 +58,17 @@
 					{#if dev.mac}
 						<span class="vui-badge vui-badge-info">MAC {dev.mac}</span>
 					{/if}
+					<button
+						class="refresh-btn"
+						title="Re-read device properties (units, names)"
+						onclick={(e) => refreshDevice(e, dev.id)}
+						disabled={refreshing === dev.id}
+					>
+						<RefreshCw size={12} class={refreshing === dev.id ? 'spinning' : ''} />
+					</button>
 				</span>
 			</span>
-		</button>
+		</div>
 	{:else}
 		<div class="no-devices text-sub text-sm">No devices discovered</div>
 	{/each}
@@ -128,5 +152,34 @@
 	.no-devices {
 		padding: var(--vui-space-md);
 		text-align: center;
+	}
+
+	.refresh-btn {
+		background: none;
+		border: none;
+		cursor: pointer;
+		color: var(--vui-text-muted);
+		padding: 2px;
+		border-radius: var(--vui-radius-sm);
+		display: flex;
+		align-items: center;
+	}
+
+	.refresh-btn:hover {
+		color: var(--vui-accent);
+	}
+
+	.refresh-btn:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+
+	:global(.spinning) {
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		from { transform: rotate(0deg); }
+		to { transform: rotate(360deg); }
 	}
 </style>

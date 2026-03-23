@@ -486,6 +486,7 @@ async function del<T>(path: string, mock: T): Promise<T> {
 export const api = {
 	getDevices: () => get('/devices', MOCK_DEVICES),
 	getPoints: (deviceId: number) => get(`/devices/${deviceId}/points`, MOCK_POINTS[deviceId] ?? []),
+	refreshDevice: (deviceId: number) => post(`/devices/${deviceId}/refresh`, {}, { ok: true }),
 	getNetworkConfig: () => get('/config/network', MOCK_NETWORK_CONFIG),
 	setNetworkConfig: (cfg: NetworkConfig) => put('/config/network', cfg, cfg),
 	getBacnetConfig: () => get('/config/bacnet', MOCK_BACNET_CONFIG),
